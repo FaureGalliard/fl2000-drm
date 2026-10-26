@@ -907,7 +907,12 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 	priv->client = client;
 	priv->adapter = adapter;
 
-	it66121_regs_init(priv, priv->client);
+	ret = it66121_regs_init(priv, priv->client);
+	if (ret) {
+		dev_err(&client->dev, "Cannot initialize registers (%d)\n", ret);
+		i2c_unregister_device(client);
+		return ERR_PTR(ret);
+	}
 
 	priv->conn_status = connector_status_unknown;
 	INIT_DELAYED_WORK(&priv->work, &it66121_intr_work);

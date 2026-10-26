@@ -471,10 +471,19 @@ int fl2000_drm_bind(struct device *master)
 	drm = &drm_if->drm;
 	drm_if->usb_dev = usb_dev;
 
+	/*
+	 * Devres that fl2000_drm_unbind() releases to tear everything down,
+	 * registered once binding succeeded. Note that 'drm_if' itself is
+	 * managed by devm_drm_dev_alloc().
+	 */
+	holder = devres_alloc(fl2000_drm_if_release, sizeof(*holder), GFP_KERNEL);
+	if (!holder)
+		return -ENOMEM;
+
 	ret = drmm_mode_config_init(drm);
 	if (ret) {
 		drm_err(drm, "Cannot initialize DRM mode (%d)\n", ret);
-		return ret;
+		goto err_free_holder;
 	}
 
 	mode_config = &drm->mode_config;
@@ -489,7 +498,7 @@ int fl2000_drm_bind(struct device *master)
 					   NULL, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot configure simple display pipe (%d)\n", ret);
-		return ret;
+		goto err_free_holder;
 	}
 
 	/*
@@ -503,15 +512,25 @@ int fl2000_drm_bind(struct device *master)
 
 	/* Start streaming interface */
 	drm_if->stream = fl2000_stream_create(usb_dev, &drm_if->pipe.crtc);
+	if (IS_ERR(drm_if->stream)) {
+		ret = PTR_ERR(drm_if->stream);
+		drm_err(drm, "Cannot create stream (%d)\n", ret);
+		goto err_free_holder;
+	}
 
 	/* Start interrupts interface */
 	drm_if->intr = fl2000_intr_create(usb_dev, drm);
+	if (IS_ERR(drm_if->intr)) {
+		ret = PTR_ERR(drm_if->intr);
+		drm_err(drm, "Cannot start interrupt polling (%d)\n", ret);
+		goto err_destroy_stream;
+	}
 
 	/* Attach bridge */
 	ret = component_bind_all(master, &drm_if->pipe);
 	if (ret) {
 		drm_err(drm, "Cannot attach bridge (%d)\n", ret);
-		return ret;
+		goto err_destroy_intr;
 	}
 
 	drm_mode_config_reset(drm);
@@ -520,22 +539,15 @@ int fl2000_drm_bind(struct device *master)
 	if (ret) {
 		drm_err(drm, "Failed to initialize %d VBLANK(s) (%d)\n",
 			drm->mode_config.num_crtc, ret);
-		return ret;
+		goto err_unbind;
 	}
 
 	ret = drm_dev_register(drm, 0);
 	if (ret) {
 		drm_err(drm, "Cannot register DRM device (%d)\n", ret);
-		return ret;
+		goto err_unbind;
 	}
 
-	/*
-	 * Register devres that fl2000_drm_unbind() releases to tear everything
-	 * down. Note that 'drm_if' itself is managed by devm_drm_dev_alloc().
-	 */
-	holder = devres_alloc(fl2000_drm_if_release, sizeof(*holder), GFP_KERNEL);
-	if (!holder)
-		return -ENOMEM;
 	*holder = drm_if;
 	devres_add(master, holder);
 
@@ -543,6 +555,16 @@ int fl2000_drm_bind(struct device *master)
 	fl2000_usb_magic(usb_dev);
 
 	return 0;
+
+err_unbind:
+	component_unbind_all(master, drm);
+err_destroy_intr:
+	fl2000_intr_destroy(usb_dev);
+err_destroy_stream:
+	fl2000_stream_destroy(usb_dev);
+err_free_holder:
+	devres_free(holder);
+	return ret;
 }
 
 void fl2000_drm_unbind(struct device *master)

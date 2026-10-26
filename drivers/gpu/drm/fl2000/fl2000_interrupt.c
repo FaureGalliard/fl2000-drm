@@ -36,7 +36,8 @@ static void fl2000_intr_release(struct device *dev, void *res)
 
 	usb_poison_urb(intr->urb);
 	cancel_work_sync(&intr->work);
-	destroy_workqueue(intr->work_queue);
+	if (intr->work_queue)
+		destroy_workqueue(intr->work_queue);
 	usb_free_coherent(usb_dev, INTR_BUFSIZE, intr->buf, intr->transfer_dma);
 	usb_free_urb(intr->urb);
 }

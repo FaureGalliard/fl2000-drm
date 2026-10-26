@@ -426,7 +426,6 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct dr
 	stream = devres_alloc(&fl2000_stream_release, sizeof(*stream), GFP_KERNEL);
 	if (!stream)
 		return ERR_PTR(-ENOMEM);
-	devres_add(&usb_dev->dev, stream);
 
 	INIT_WORK(&stream->work, &fl2000_stream_work);
 	INIT_LIST_HEAD(&stream->render_list);
@@ -440,10 +439,11 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct dr
 
 	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
 	if (!stream->work_queue) {
-		dev_err(&usb_dev->dev, "Allocate streaming workqueue failed\n");
-		devres_release(&usb_dev->dev, fl2000_stream_release, NULL, NULL);
+		devres_free(stream);
 		return ERR_PTR(-ENOMEM);
 	}
+
+	devres_add(&usb_dev->dev, stream);
 
 	return stream;
 }
