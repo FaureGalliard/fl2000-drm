@@ -31,6 +31,82 @@ Opcional, pero recomendable antes de la v1: probar
 se rechaza y GNOME usa 59.94 Hz), pero cambia el modo que recibe tu monitor,
 así que solo debe entrar si se ve bien en pantalla.
 
+## 0b. Antes de enviar: hablar con Artem Mygaiev (klogg)
+
+Investigado el 26 de octubre de 2026:
+
+- **Nadie ha enviado nunca un driver FL2000 a las listas del kernel**, y en
+  mainline no hay soporte para FL2000. La búsqueda se hizo por índices web
+  porque lore.kernel.org no era accesible desde el entorno de preparación;
+  compruébalo tú: <https://lore.kernel.org/all/?q=fl2000> y `?q=1d5c`.
+- **Pero el autor original está activo otra vez.** Entre el 17 y el 19 de
+  octubre de 2026, Artem subió decenas de commits a
+  <https://github.com/klogg/fl2000_drm>: quitó `simple_display_pipe`, adaptó el
+  driver IT66121 del kernel, apunta a Linux 7.0 y ya hace la selección
+  RGB888/RGB565 por ancho de banda. En el PR #86
+  (<https://github.com/klogg/fl2000_drm/pull/86>) escribió que publicará en el
+  kernel "por separado" el trabajo del IT66121.
+- Samuv5 borró el 22 de octubre su modernización de mayo y junio (de la que
+  parte este fork) diciendo que "compilaba pero no funcionaba", y la ha
+  reescrito; según su README, la parte HDMI está sin probar en hardware.
+- Hay otros forks activos: rhgndf (VGA, autor del PR #86) y
+  vfox888-cpu/alpha-fl2000 (escrito desde cero).
+
+Mandar un RFC sin avisar chocaría con el autor del código del que deriva este
+driver, y eso perjudica la revisión más que cualquier detalle de estilo.
+Escríbele antes (issue o correo, `joculator@gmail.com` según el historial).
+Lo que este fork aporta y su rama no tiene probado en tu hardware:
+
+- el EDID por el bus I²C del FL2000;
+- el ciclo de vida del bridge a través de `usb_reset_device()`;
+- el arreglo del lag por IRQ;
+- las correcciones de esta preparación.
+
+Hay tres caminos razonables: que él lo envíe con tus parches (te da
+`Co-developed-by:` + `Signed-off-by:` o `Tested-by:`, y también cuenta como
+contribución al kernel), enviarlo juntos, o que te ceda el envío.
+
+## Uso de IA: `Assisted-by`
+
+`Documentation/process/coding-assistants.rst` (en el árbol del kernel) dice:
+
+- Una IA nunca pone `Signed-off-by`. Solo lo pone el humano, que certifica el
+  DCO y se responsabiliza del código.
+- Las contribuciones en las que ha participado una herramienta de IA deberían
+  llevar `Assisted-by: AGENTE:MODELO [herramientas]`.
+
+Buena parte de esta preparación se hizo con ayuda de IA, así que la regla
+aplica. El script no añade la etiqueta por defecto. Para incluirla:
+`ASSISTED_BY="AGENTE:MODELO" scripts/make-upstream-series.sh ...`, con el
+nombre y la versión exactos de la herramienta que usaste. No declararlo y que
+luego se note suele sentar peor a los revisores que declararlo. La decisión es
+tuya.
+
+## Calendario realista
+
+- **Ritmo:** sale un kernel cada 9 semanas (10 si cae en vacaciones). Últimas
+  versiones: 7.1 el 14 de junio de 2026, 7.2 el 16 de agosto y 7.3 el 18 de
+  octubre. Ahora está abierta la ventana de merge de 7.4.
+- **Plazo para drivers nuevos:** tienen que estar aplicados en drm-misc-next
+  antes del -rc6 del ciclo anterior (`Documentation/gpu/introduction.rst`,
+  "Feature Merge Deadlines").
+- **Proyección:**
+  - **7.5** sale hacia finales de febrero de 2027. Su plazo es el 7.4-rc6,
+    hacia el 6 de diciembre de 2026, y no da tiempo.
+  - **7.6** sale hacia finales de abril de 2027. Es realista si el RFC sale
+    pronto.
+  - **7.7** sale hacia finales de junio de 2027. Es lo esperable si piden
+    reutilizar el IT66121 del kernel.
+- **Ningún kernel que salga en enero** puede llevar este driver: el que se
+  publique hacia final de diciembre (7.4) ya cerró su plazo.
+- **Rondas de revisión:** los drivers DRM nuevos recientes necesitaron entre 4
+  y 11 versiones a lo largo de 2 a 5 meses (appletbdrm v7, Sharp Memory LCD
+  v11).
+- **Badge de GitHub:** el commit se atribuye por el email del autor
+  (`From:`). `angelcrispinvaldivia@gmail.com` tiene que estar añadido y
+  verificado en tu cuenta de GitHub. Aparece cuando Linus lo fusiona en su
+  árbol, es decir, cuando sale el rc1 de esa versión.
+
 ## 1. Árbol base: drm-misc-next
 
 Los drivers DRM pequeños entran por **drm-misc**, no por el árbol de Linus.
@@ -188,6 +264,33 @@ los plantea:
    `usb`, no a una interfaz nuestra. Es lo que permite sobrevivir a
    `usb_reset_device()`, pero es poco habitual y probablemente lo
    cuestionen; la carta de presentación lo pregunta (punto 4).
+
+7. **Framework de componentes.** `drivers/gpu/drm/drm_drv.c` desaconseja
+   usar componentes cuando existe una interfaz estándar como `drm_bridge`. Lo
+   esperable es crear el bridge en el probe y usar `drm_bridge_attach()` y
+   `devm_drm_bridge_add()`.
+8. **El dispositivo DRM cuelga del adaptador I²C.** Lo esperable es que cuelgue
+   de la interfaz USB, con
+   `drm_dev_set_dma_dev(drm, usb_intf_get_dma_device(intf))`, como hacen
+   udl, gud y appletbdrm. Esto afecta a PRIME y a la topología de udev.
+9. **Una interfaz y no tres.** Lo idiomático es enlazar una sola interfaz y
+   reclamar las otras con `usb_driver_claim_interface()`, con el estado
+   ligado a la interfaz (`usb_set_intfdata()`) o a `drmm_*`. Klogg y el PR #86
+   ya lo hicieron así.
+10. **Helpers que ya existen:**
+    - *shadow-plane* (`DRM_GEM_SHADOW_PLANE_HELPER_FUNCS`) en vez de mapear el
+      framebuffer a mano;
+    - `drm_fb_xrgb8888_to_rgb888()`/`_rgb565()` (`drm_format_helper.h`). El
+      FL2000 necesita además intercambiar las dos mitades de 32 bits de cada
+      palabra de 64, cosa que no hace ningún helper; hay que justificarlo;
+    - iteradores de *damage*;
+    - `DRM_BRIDGE_OP_HDMI` para los infoframes;
+    - `REGCACHE_MAPLE` en lugar de `REGCACHE_RBTREE`.
+11. **Posible bug con anchos raros.** El intercambio de mitades de 64 bits se
+    reinicia en cada línea. Con anchos cuyo tamaño de línea no es múltiplo de
+    8 bytes (1366 px en RGB888, por ejemplo), la imagen saldría
+    desordenada. Con 1920 px no ocurre. Hay que comprobarlo con un modo
+    1366x768.
 
 Ninguno de estos puntos se ha tocado todavía porque cambian el
 comportamiento de un driver que funciona y no se pueden validar sin el

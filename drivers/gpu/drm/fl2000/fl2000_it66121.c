@@ -843,7 +843,11 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 
 static struct i2c_client *it66121_i2c_init(struct i2c_adapter *adapter)
 {
-	struct i2c_board_info board_info = { I2C_BOARD_INFO("it66121", 0) };
+	/*
+	 * Not "it66121": that name would make the ite-it66121 driver, if built,
+	 * try to bind this client and release our devres when its probe fails.
+	 */
+	struct i2c_board_info board_info = { I2C_BOARD_INFO("fl2000-it66121", 0) };
 
 	/* According to datasheet IT66121 addresses are 0x98 or 0x9A including cmd */
 	const unsigned short it66121_addr[] = { (0x98 >> 1), (0x9A >> 1), I2C_CLIENT_END };

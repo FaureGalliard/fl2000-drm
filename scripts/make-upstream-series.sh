@@ -21,6 +21,11 @@
 # files that grow over the series. Set CHECK_BUILD=1 (in an already
 # configured tree with CONFIG_DRM_FL2000=m) to build-test every patch.
 #
+# Set ASSISTED_BY="AGENT_NAME:MODEL_VERSION [tools]" to add the Assisted-by
+# trailer that Documentation/process/coding-assistants.rst asks for when AI
+# tools contributed to the patches. The Signed-off-by is always the human
+# submitter's own.
+#
 # Patch identity comes from git config user.name / user.email in the
 # linux tree. The patch carries a Signed-off-by for that identity: adding
 # it certifies the Developer's Certificate of Origin
@@ -78,7 +83,12 @@ commit_stage() {
 	local n=$1
 	shift
 	git add "$DRV" "$@"
-	git commit -q -s -F "$SERIES/$n.txt"
+	if [ -n "${ASSISTED_BY:-}" ]; then
+		# Documentation/process/coding-assistants.rst
+		git commit -q -s -F "$SERIES/$n.txt" --trailer "Assisted-by: $ASSISTED_BY"
+	else
+		git commit -q -s -F "$SERIES/$n.txt"
+	fi
 	if [ -n "${CHECK_BUILD:-}" ]; then
 		# Every patch must build on its own (bisectability)
 		make -s W=1 "$DRV/"

@@ -43,7 +43,7 @@ static int fl2000_compare(struct device *dev, void *data)
 	struct i2c_client *client = i2c_verify_client(dev);
 	struct i2c_adapter *adapter = data;
 	static const char *const fl2000_supported_bridges[] = {
-		"it66121",
+		"fl2000-it66121",
 	};
 
 	/*

@@ -26,6 +26,13 @@ fix (`082a6a4`), have been run on hardware yet.** They compile cleanly (W=1)
 and pass `checkpatch --strict`. Running the field test on the adapter is the
 immediate next task — see "Open issues".
 
+**Coordinate with the original author before posting anything.** Artem
+Mygaiev (klogg) resumed work in Oct 2026: he dropped simple-pipe, adapted the
+in-tree IT66121 driver, and said in klogg/fl2000_drm#86 that he will upstream
+the IT66121 work himself. See `docs/UPSTREAMING.md` section 0b, and that
+file's timeline section: the earliest realistic mainline release is 7.6 (late
+April 2027), not January.
+
 ## Environment
 
 - Target: Arch Linux, kernel 7.1.x, and upstream drm-misc-next. The code uses
@@ -97,6 +104,11 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
 - **URB completion handlers run in atomic context.** No `GFP_KERNEL`, no
   `usb_clear_halt()`, no `cond_resched()` there; use `spin_lock_irqsave()`.
   `fl2000_submit_urb()` sleeps and is for process context only.
+- **The IT66121 I2C client must not be named `"it66121"`.** That is the
+  in-tree `ite-it66121` driver's `i2c_device_id`. If that driver is built, it
+  would try to bind our client, fail without an OF node, and release our
+  devres (use-after-free). Ours is `"fl2000-it66121"`, matched in
+  `fl2000_compare()`.
 - **Register fields are `GENMASK()`/`FIELD_PREP()`**, never C bitfields
   (implementation-defined layout; one bitfield union silently read the wrong
   byte for years, see `docs/DEVELOPMENT.md`).
@@ -131,13 +143,22 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **Upstream review items** (expected requests, not started because they
+7. **Odd line widths may be scrambled.** The 64-bit half swap in the
+   conversion loops (`xx ^ 4`, `x ^ 2`) restarts at every line, so a line
+   whose byte length is not a multiple of 8 (e.g. 1366 px at RGB888) is
+   probably wrong. Fine at 1920. Test a 1366x768 mode.
+8. **Upstream review items** (expected requests, not started because they
    change working behavior): reuse the in-tree `ite-it66121` bridge instead of
    `fl2000_it66121.c`, drop `drm_simple_display_pipe`, `drm_bridge_connector`
    + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`, a vblank timer instead of per-URB
    vblank (overlaps with 2), fbdev emulation, real suspend/resume, atomic
-   bridge callbacks. Listed in `docs/UPSTREAMING.md` section 6 and asked about
-   in the RFC cover letter.
+   bridge callbacks, no component framework (`drm_bridge_attach()`), DRM
+   device parented to the USB interface with `drm_dev_set_dma_dev()`, a single
+   interface plus `usb_driver_claim_interface()`, shadow-plane and
+   format-conversion helpers. Listed in `docs/UPSTREAMING.md` section 6.
+   `Documentation/process/coding-assistants.rst` asks for an `Assisted-by:`
+   tag on AI-assisted kernel patches. `make-upstream-series.sh` adds it only
+   when `ASSISTED_BY` is set; the maintainer decides.
 
 ## Workflow notes
 
