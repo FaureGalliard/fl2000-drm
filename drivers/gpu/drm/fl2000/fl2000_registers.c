@@ -62,7 +62,7 @@ static const struct regmap_config fl2000_regmap_config = {
 	.reg_stride = 4,
 	.max_register = 0xFFFF,
 
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 
 	.precious_reg = fl2000_reg_precious,
 	.volatile_reg = fl2000_reg_volatile,

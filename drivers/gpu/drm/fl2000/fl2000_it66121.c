@@ -77,7 +77,7 @@ static const struct regmap_config it66121_regmap_config = {
 	.reg_stride = 1,
 	.max_register = 2 * IT66121_BANK_SIZE - 1, /* 2 banks of registers */
 
-	.cache_type = REGCACHE_RBTREE,
+	.cache_type = REGCACHE_MAPLE,
 
 	.volatile_reg = it66121_reg_volatile,
 
