@@ -515,15 +515,22 @@ static int it66121_bind(struct device *comp, struct device *master, void *master
 {
 	int ret;
 	struct drm_bridge *bridge = dev_get_drvdata(comp);
-	struct drm_simple_display_pipe *pipe = master_data;
+	struct drm_device *drm = master_data;
 	struct i2c_adapter *adapter = i2c_verify_adapter(master);
+	struct drm_encoder *encoder;
 
 	if (!adapter)
 		return -ENODEV;
 
+	/* The FL2000 has a single encoder */
+	encoder = list_first_entry_or_null(&drm->mode_config.encoder_list, struct drm_encoder,
+					   head);
+	if (!encoder)
+		return -ENODEV;
+
 	dev_dbg(comp, "Binding IT66121 component\n");
 
-	ret = drm_simple_display_pipe_attach_bridge(pipe, bridge);
+	ret = drm_bridge_attach(encoder, bridge, NULL, 0);
 	if (ret)
 		dev_err(comp, "Cannot attach IT66121 bridge (%d)\n", ret);
 

@@ -91,7 +91,9 @@ static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed, unsigned i
 struct fl2000_drm_if {
 	struct usb_device *usb_dev;
 	struct drm_device drm;
-	struct drm_simple_display_pipe pipe;
+	struct drm_plane plane;
+	struct drm_crtc crtc;
+	struct drm_encoder encoder;
 	struct fl2000_stream *stream;
 	struct fl2000_intr *intr;
 };
@@ -254,45 +256,21 @@ static int fl2000_mode_calc(const struct drm_display_mode *mode,
 	return -EINVAL;
 }
 
-static enum drm_mode_status fl2000_display_mode_valid(struct drm_simple_display_pipe *pipe,
-						      const struct drm_display_mode *mode)
+static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
+						   const struct drm_display_mode *mode)
 {
-	struct drm_device *drm = pipe->crtc.dev;
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
 	struct drm_display_mode adjusted_mode;
 	struct fl2000_pll pll;
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
-	struct usb_device *usb_dev = drm_if->usb_dev;
 
 	/* Get PLL configuration and check if mode adjustments are needed */
 	if (fl2000_mode_calc(mode, &adjusted_mode, &pll))
 		return MODE_BAD;
 
-	if (fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode.clock) == 0)
+	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, adjusted_mode.clock) == 0)
 		return MODE_BAD;
 
 	return MODE_OK;
-}
-
-static void fl2000_display_enable(struct drm_simple_display_pipe *pipe,
-				  struct drm_crtc_state *cstate,
-				  struct drm_plane_state *plane_state)
-{
-	struct drm_crtc *crtc = &pipe->crtc;
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
-
-	fl2000_stream_enable(drm_if->stream);
-
-	drm_crtc_vblank_on(crtc);
-}
-
-static void fl2000_display_disable(struct drm_simple_display_pipe *pipe)
-{
-	struct drm_crtc *crtc = &pipe->crtc;
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
-
-	fl2000_stream_disable(drm_if->stream);
-
-	drm_crtc_vblank_off(crtc);
 }
 
 /* The whole frame is always converted: @rect is currently unused */
@@ -327,56 +305,104 @@ out_exit:
 	drm_dev_exit(idx);
 }
 
-static void fl2000_display_update(struct drm_simple_display_pipe *pipe,
-				  struct drm_plane_state *old_state)
-{
-	struct drm_crtc *crtc = &pipe->crtc;
-	struct drm_device *drm = crtc->dev;
-	struct drm_pending_vblank_event *event = crtc->state->event;
-	struct drm_plane_state *state = pipe->plane.state;
-	struct drm_rect rect;
+/*
+ * Primary plane
+ */
 
-	if (drm_atomic_helper_damage_merged(old_state, state, &rect))
-		fl2000_dirty(state->fb, &rect);
-
-	if (event) {
-		crtc->state->event = NULL;
-
-		spin_lock_irq(&drm->event_lock);
-		if (crtc->state->active && drm_crtc_vblank_get(crtc) == 0)
-			drm_crtc_arm_vblank_event(crtc, event);
-		else
-			drm_crtc_send_vblank_event(crtc, event);
-		spin_unlock_irq(&drm->event_lock);
-	}
-}
-
-/* Logical pipe management (no HW configuration here) */
-static const struct drm_simple_display_pipe_funcs fl2000_display_funcs = {
-	.mode_valid = fl2000_display_mode_valid,
-	.enable = fl2000_display_enable,
-	.disable = fl2000_display_disable,
-	.update = fl2000_display_update,
+static const u64 fl2000_plane_format_modifiers[] = {
+	DRM_FORMAT_MOD_LINEAR,
+	DRM_FORMAT_MOD_INVALID,
 };
 
-static void fl2000_output_mode_set(struct drm_encoder *encoder, struct drm_display_mode *mode,
-				   struct drm_display_mode *adjusted_mode)
+static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_commit *state)
 {
-	struct drm_device *drm = encoder->dev;
+	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
+	struct drm_crtc_state *new_crtc_state = NULL;
+
+	if (new_plane_state->crtc)
+		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
+
+	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
+						   DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
+						   false, false);
+}
+
+static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
+{
+	struct drm_plane_state *old_plane_state = drm_atomic_get_old_plane_state(state, plane);
+	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
+	struct drm_rect rect;
+
+	if (!plane_state->fb)
+		return; /* plane is disabled */
+
+	if (drm_atomic_helper_damage_merged(old_plane_state, plane_state, &rect))
+		fl2000_dirty(plane_state->fb, &rect);
+}
+
+static const struct drm_plane_helper_funcs fl2000_plane_helper_funcs = {
+	.atomic_check = fl2000_plane_atomic_check,
+	.atomic_update = fl2000_plane_atomic_update,
+};
+
+static const struct drm_plane_funcs fl2000_plane_funcs = {
+	.update_plane = drm_atomic_helper_update_plane,
+	.disable_plane = drm_atomic_helper_disable_plane,
+	.destroy = drm_plane_cleanup,
+	.atomic_create_state = drm_atomic_helper_plane_create_state,
+	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+};
+
+/*
+ * CRTC
+ */
+
+static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
+	struct fl2000_pll pll;
+	int ret;
+
+	ret = drm_crtc_helper_atomic_check(crtc, state);
+	if (ret)
+		return ret;
+
+	if (!crtc_state->enable || !drm_atomic_crtc_needs_modeset(crtc_state))
+		return 0;
+
+	/* PLL configuration, with htotal and clock adjusted to what the PLL can produce */
+	ret = fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll);
+	if (ret)
+		return ret;
+
+	/* The USB link must be able to carry the adjusted pixel clock */
+	if (!fl2000_get_bytes_pix(drm_if->usb_dev->speed, crtc_state->adjusted_mode.clock))
+		return -EINVAL;
+
+	return 0;
+}
+
+/* Called before the bridge's mode_set: the FL2000 must be clocked first */
+static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
+{
+	struct drm_device *drm = crtc->dev;
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
 	struct usb_device *usb_dev = drm_if->usb_dev;
+	const struct drm_display_mode *mode = &crtc->state->mode;
+	const struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
 	struct fl2000_timings timings;
 	struct fl2000_pll pll;
 	unsigned int bytes_pix;
 
-	/* Get PLL configuration and check if mode adjustments are needed */
-	if (fl2000_mode_calc(mode, adjusted_mode, &pll))
+	/*
+	 * Same computation as in atomic_check, which already validated the mode
+	 * and stored the adjusted htotal and clock in adjusted_mode.
+	 */
+	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll)))
 		return;
-
-	/* Check how many bytes per pixel shall be used with adjusted clock */
 	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode->clock);
-	if (!bytes_pix)
-		return;
 
 	drm_dbg_kms(drm, "Mode requested:  " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
 	drm_dbg_kms(drm, "Mode configured: " DRM_MODE_FMT "\n", DRM_MODE_ARG(adjusted_mode));
@@ -414,9 +440,82 @@ static void fl2000_output_mode_set(struct drm_encoder *encoder, struct drm_displ
 	fl2000_stream_mode_set(drm_if->stream, mode->hdisplay * mode->vdisplay, bytes_pix);
 }
 
-/* FL2000 HW control functions: mode configuration, turn on/off */
-static const struct drm_encoder_helper_funcs fl2000_encoder_funcs = {
-	.mode_set = fl2000_output_mode_set,
+static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
+
+	fl2000_stream_enable(drm_if->stream);
+
+	drm_crtc_vblank_on(crtc);
+}
+
+static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
+
+	fl2000_stream_disable(drm_if->stream);
+
+	drm_crtc_vblank_off(crtc);
+}
+
+static void fl2000_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state)
+{
+	struct drm_device *drm = crtc->dev;
+	struct drm_pending_vblank_event *event = crtc->state->event;
+
+	if (!event)
+		return;
+
+	crtc->state->event = NULL;
+
+	spin_lock_irq(&drm->event_lock);
+	if (crtc->state->active && drm_crtc_vblank_get(crtc) == 0)
+		drm_crtc_arm_vblank_event(crtc, event);
+	else
+		drm_crtc_send_vblank_event(crtc, event);
+	spin_unlock_irq(&drm->event_lock);
+}
+
+static const struct drm_crtc_helper_funcs fl2000_crtc_helper_funcs = {
+	.mode_valid = fl2000_crtc_mode_valid,
+	.atomic_check = fl2000_crtc_atomic_check,
+	.mode_set_nofb = fl2000_crtc_mode_set_nofb,
+	.atomic_flush = fl2000_crtc_atomic_flush,
+	.atomic_enable = fl2000_crtc_atomic_enable,
+	.atomic_disable = fl2000_crtc_atomic_disable,
+};
+
+/*
+ * Vblank is signalled from the URB completion handler, so there is nothing
+ * to switch on or off here.
+ */
+static int fl2000_crtc_enable_vblank(struct drm_crtc *crtc)
+{
+	return 0;
+}
+
+static void fl2000_crtc_disable_vblank(struct drm_crtc *crtc)
+{
+}
+
+static const struct drm_crtc_funcs fl2000_crtc_funcs = {
+	.atomic_create_state = drm_atomic_helper_crtc_create_state,
+	.destroy = drm_crtc_cleanup,
+	.set_config = drm_atomic_helper_set_config,
+	.page_flip = drm_atomic_helper_page_flip,
+	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
+	.enable_vblank = fl2000_crtc_enable_vblank,
+	.disable_vblank = fl2000_crtc_disable_vblank,
+};
+
+/*
+ * Encoder: the FL2000 is programmed from the CRTC, the IT66121 bridge hangs
+ * off this encoder.
+ */
+
+static const struct drm_encoder_funcs fl2000_encoder_funcs = {
+	.destroy = drm_encoder_cleanup,
 };
 
 static void fl2000_drm_if_release(struct device *dev, void *res)
@@ -495,25 +594,39 @@ int fl2000_drm_bind(struct device *master)
 	mode_config->min_height = 1;
 	mode_config->max_height = FL2000_MAX_HEIGHT;
 
-	ret = drm_simple_display_pipe_init(drm, &drm_if->pipe, &fl2000_display_funcs,
-					   fl2000_pixel_formats, ARRAY_SIZE(fl2000_pixel_formats),
-					   NULL, NULL);
+	ret = drm_universal_plane_init(drm, &drm_if->plane, 0, &fl2000_plane_funcs,
+				       fl2000_pixel_formats, ARRAY_SIZE(fl2000_pixel_formats),
+				       fl2000_plane_format_modifiers, DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (ret) {
-		drm_err(drm, "Cannot configure simple display pipe (%d)\n", ret);
+		drm_err(drm, "Cannot initialize plane (%d)\n", ret);
 		goto err_free_holder;
 	}
+	drm_plane_helper_add(&drm_if->plane, &fl2000_plane_helper_funcs);
 
 	/*
 	 * Enable the damage-clips property the update path relies on
 	 * (drm_atomic_helper_damage_merged()).
 	 */
-	drm_plane_enable_fb_damage_clips(&drm_if->pipe.plane);
+	drm_plane_enable_fb_damage_clips(&drm_if->plane);
 
-	/* Register .mode_set to program the FL2000 before the bridge */
-	drm_encoder_helper_add(&drm_if->pipe.encoder, &fl2000_encoder_funcs);
+	ret = drm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, NULL,
+					&fl2000_crtc_funcs, NULL);
+	if (ret) {
+		drm_err(drm, "Cannot initialize CRTC (%d)\n", ret);
+		goto err_free_holder;
+	}
+	drm_crtc_helper_add(&drm_if->crtc, &fl2000_crtc_helper_funcs);
+
+	ret = drm_encoder_init(drm, &drm_if->encoder, &fl2000_encoder_funcs,
+			       DRM_MODE_ENCODER_NONE, NULL);
+	if (ret) {
+		drm_err(drm, "Cannot initialize encoder (%d)\n", ret);
+		goto err_free_holder;
+	}
+	drm_if->encoder.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 
 	/* Start streaming interface */
-	drm_if->stream = fl2000_stream_create(usb_dev, &drm_if->pipe.crtc);
+	drm_if->stream = fl2000_stream_create(usb_dev, &drm_if->crtc);
 	if (IS_ERR(drm_if->stream)) {
 		ret = PTR_ERR(drm_if->stream);
 		drm_err(drm, "Cannot create stream (%d)\n", ret);
@@ -529,7 +642,7 @@ int fl2000_drm_bind(struct device *master)
 	}
 
 	/* Attach bridge */
-	ret = component_bind_all(master, &drm_if->pipe);
+	ret = component_bind_all(master, drm);
 	if (ret) {
 		drm_err(drm, "Cannot attach bridge (%d)\n", ret);
 		goto err_destroy_intr;

@@ -1,0 +1,14 @@
+Out-of-tree build support for kernels older than the API the driver follows.
+
+The driver in drivers/gpu/drm/fl2000/ uses the current DRM API, exactly as it
+is submitted upstream. When the top-level Makefile finds that the target
+kernel still uses older names, it copies the sources to .compat-build/ and
+applies the matching sed rules below before building. Nothing here is part of
+the upstream patches.
+
+  atomic-commit.sed   struct drm_atomic_commit was struct drm_atomic_state
+  create-state.sed    crtc/plane .atomic_create_state was .reset
+  bridge-state.sed    bridge .atomic_create_state was .atomic_reset
+
+When a new kernel renames something the driver uses, update the driver to the
+new name and add a rule here for the old one.

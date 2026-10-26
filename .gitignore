@@ -21,3 +21,4 @@ spelling.txt
 .vscode-ctags
 .vscode/*
 outgoing/
+.compat-build/
