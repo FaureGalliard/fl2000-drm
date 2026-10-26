@@ -20,3 +20,4 @@ spelling.txt
 .cache.mk
 .vscode-ctags
 .vscode/*
+outgoing/

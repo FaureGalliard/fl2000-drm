@@ -1,0 +1,49 @@
+drm: Add Fresco Logic FL2000 USB display driver
+
+Hi,
+
+This series adds a DRM driver for USB display adapters built around the
+Fresco Logic FL2000DX (USB ID 1d5c:2000). These are sold under many
+brands as cheap USB 3.0 to VGA/HDMI dongles; the HDMI variants pair the
+FL2000 with an ITE IT66121 HDMI transmitter on the FL2000's I2C bus.
+Today these adapters only work on Linux with out-of-tree drivers.
+
+The driver started as Artem Mygaiev's out-of-tree fl2000_drm driver. I
+ported it to current kernels, fixed the problems found on real hardware
+(EDID, bridge lifetime across USB resets, crashes on disconnect) and cleaned
+it up for submission.
+
+It is posted as an RFC because there are design points I would like
+feedback on before doing the larger reworks:
+
+1. IT66121 support. The series carries its own small IT66121 bridge
+   (fl2000_it66121.c) instead of reusing drivers/gpu/drm/bridge/
+   ite-it66121.c. The in-tree driver is probed from device tree and
+   reads EDID through the IT66121 DDC engine, but on the tested adapter
+   the monitor's DDC lines are wired to the FL2000 I2C bus and the
+   IT66121 DDC engine never completes an EDID read. What would be the
+   preferred direction: instantiate ite-it66121 from the USB driver
+   (software node) and let it attach with DRM_BRIDGE_ATTACH_NO_CONNECTOR
+   while the FL2000 side provides the DDC adapter to a bridge connector,
+   or keep the IT66121 handling private to this driver?
+
+2. The display pipeline still uses drm_simple_display_pipe and the
+   bridge still creates its own connector. I plan to convert to regular
+   atomic plane/CRTC/encoder helpers and drm_bridge_connector for v2,
+   which depends on the answer to (1).
+
+3. Vblank events are currently signalled from the bulk URB completion,
+   so they follow the USB transfer rate rather than the mode's refresh
+   rate. Is the DRM vblank timer the preferred way to pace this, as
+   other USB display drivers without a hardware vblank do?
+
+Other known limitations: no fbdev emulation yet, no suspend/resume
+handling, damage clips are not used (every update converts the whole
+frame), and VGA-only FL2000 adapters are untested.
+
+Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
+to HDMI adapter and a 1920x1080 monitor: EDID, mode setting and the
+desktop work. The driver builds without warnings with W=1 and the
+patch passes checkpatch --strict.
+
+Thanks,

@@ -1,0 +1,43 @@
+From cc64e64a91af4d76656980dce14dfcbdb6f14aba Mon Sep 17 00:00:00 2001
+From: Angel Gabriel Crispin Valdivia <angelcrispinvaldivia@gmail.com>
+Date: Mon, 26 Oct 2026 19:56:30 +0000
+Subject: [PATCH] fix: actually try the htotal adjustments when searching a PLL
+ setting
+
+fl2000_mode_calc() is meant to retry the PLL search with htotal
+adjusted by 0, -1, +1, -2, +2, ... -10, +10 pixels when the pixel clock
+cannot be matched within FL2000_PPM_ERR_MAX. The loop starts with the
+sign 's' at 0, so 'd' stays 0 and the same search runs 21 times: any
+mode the PLL cannot hit exactly is rejected.
+
+That is why the 60.00 Hz 1920x1080 mode (148.5 MHz) is rejected and
+the 59.94 Hz variant (148.352 MHz) is used instead. With the fix, among
+common modes 1280x1024@60, 1366x768@60, 1440x900@60, 1600x900@60,
+1920x1080@60/@50, 1920x1200@60 (reduced blanking), 2560x1440@30 and
+3840x2160@30 become available, each with htotal changed by at most 10
+pixels (simulated with the PLL code). Modes that were accepted before
+are unchanged, since d = 0 is still tried first.
+
+Needs hardware testing: the desktop will probably switch from 59.94 Hz
+to the monitor's preferred 60.00 Hz mode, programmed with htotal 2198
+instead of 2200.
+---
+ drivers/gpu/drm/fl2000/fl2000_drm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/fl2000/fl2000_drm.c b/drivers/gpu/drm/fl2000/fl2000_drm.c
+index 9629be1..d09b525 100644
+--- a/drivers/gpu/drm/fl2000/fl2000_drm.c
++++ b/drivers/gpu/drm/fl2000/fl2000_drm.c
+@@ -225,7 +225,7 @@ static int fl2000_mode_calc(const struct drm_display_mode *mode,
+ 	 * 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, ...
+ 	 * Here, 's' is used for sign, 'm' is used for modulo, and 'd' is the adjustment value.
+ 	 */
+-	for (int m = 0, s = 0, d = 0; m <= max_h_adjustment * 2; m++, s = -s, d += m * s) {
++	for (int m = 0, s = 1, d = 0; m <= max_h_adjustment * 2; m++, s = -s, d += m * s) {
+ 		/*
+ 		 * Maximum pixel clock 1GHz, or 10^9Hz. Multiply by 10^6 we get 10^15Hz. Assume
+ 		 * maximum htotal is 10000 pix (no way) we get 10^19 max value and using u64 which
+-- 
+2.43.0
+

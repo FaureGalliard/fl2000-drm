@@ -2,13 +2,13 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-GPL%20v2-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Kernel-6.16%2B%20%2F%207.x-green.svg" alt="Kernel Version">
+  <img src="https://img.shields.io/badge/Kernel-7.1%2B-green.svg" alt="Kernel Version">
   <img src="https://img.shields.io/badge/Architecture-x86__64-orange.svg" alt="Architecture">
 </p>
 
 ## Overview
 
-This is a modernized version of the FL2000 DRM driver, updated to work with Linux kernel 7.x (also builds on kernel 6.16 and later). The driver supports USB-to-HDMI adapters based on the Fresco Logic FL2000DX chip with the IT66121FN HDMI bridge.
+This is a modernized version of the FL2000 DRM driver, updated to work with Linux kernel 7.x (tested on 7.1; it uses `kzalloc_obj()`, so older kernels do not build it). The sources under `drivers/gpu/drm/fl2000/` are being prepared for submission to the mainline kernel, see `docs/UPSTREAMING.md`. The driver supports USB-to-HDMI adapters based on the Fresco Logic FL2000DX chip with the IT66121FN HDMI bridge.
 
 ## Features
 
@@ -35,7 +35,7 @@ This is a modernized version of the FL2000 DRM driver, updated to work with Linu
 sudo apt-get update
 sudo apt-get install build-essential linux-headers-$(uname -r)
 
-# Verify kernel version (must be 6.16 or later, including 7.x)
+# Verify kernel version (must be 7.1 or later)
 uname -r
 ```
 

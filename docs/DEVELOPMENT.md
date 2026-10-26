@@ -84,12 +84,33 @@ found. All are fixed.
 | `failed to create dumb buffer: Cannot allocate memory` | GEM DMA (CMA) helpers require ~8.3 MB physically contiguous for 1080p; impossible on x86 without CMA. Switched to GEM SHMEM |
 | Desktop-wide lag, amdgpu `Fence fallback timer expired` | Multi-MB `memcpy`/pixel conversion executed while holding `list_lock`, which disables interrupts. The resend copy runs continuously even on a static desktop |
 
+## Findings from the upstream clean-up (October 2026)
+
+Found while reading the code line by line for kernel style. None had shown up
+as a field failure, which is exactly why they are recorded here.
+
+| Finding | What was done |
+|---|---|
+| `fl2000_mode_calc()` loop starts with `s = 0`, so the htotal adjustment `d` is always 0 and the same PLL search runs 21 times. Modes the PLL cannot hit within 500 ppm are rejected — including 1920x1080@60.00 (148.5 MHz); the desktop runs at 59.94 Hz because of it | **Not applied** (changes the mode sent to the monitor). Fix + simulation results in `docs/pending/0001-*.patch` |
+| IT66121 `INT_STATUS_1` was decoded through a bitfield union with 24 padding bits first, so all 8 flags landed at bits 24-31 of an 8-bit register value and always read 0. The DDC-recovery and HPD branches of `it66121_intr_work()` never ran ("Monitor HPD" never appears in any log) | Dead branches removed (no functional change); correct bit defines kept. Enabling them needs HPD to be cleared via `INT_CLR` or it would fire every 100 ms |
+| Interrupt URB resubmitted with `GFP_KERNEL` + `cond_resched()`, and `usb_clear_halt()` on stall, both inside URB completion (atomic context) | Fixed: `GFP_ATOMIC`, stall treated as error |
+| `fl2000_i2c_init()` failure path called `devres_free()` on an already-added devres → `BUG_ON` | Fixed: `devm_kzalloc()` + `devm_i2c_add_adapter()` |
+| `fl2000_drm_bind()` did not check `fl2000_stream_create()`/`fl2000_intr_create()` for `ERR_PTR` and had no unwinding | Fixed |
+| Stream disable could hang in `drain_workqueue()` if no URB was in flight to `up()` the semaphore the work slept on | Semaphore replaced by an atomic credit counter + wait queue; disable wakes the work |
+| FL2000 register bitfield unions and `fl2000_add_bitmask()` | Replaced by `GENMASK()`; proven identical with a mocked regmap that logs all 691 register writes of both versions |
+
+The FL2000 register helpers can be unit-tested this way: compile
+`fl2000_registers.c` in userspace against a stub `fl2000.h` that provides
+logging `regmap_write()`/`regmap_write_bits()`/`regmap_read()` and the
+`BIT`/`GENMASK`/`FIELD_PREP` macros, then diff the logs of two versions.
+
 ## Rejected theories
 
 - *"Kernel 7.x broke the DRM API broadly."* It did not. Almost everything the
   driver uses still exists in 7.1 (`drm_simple_display_pipe`, legacy bridge
   callbacks, `drm_get_edid`, `create_workqueue`, `REGCACHE_RBTREE`). The only
-  mandatory change was bridge refcounting.
+  mandatory change was bridge refcounting. (Several of these are deprecated
+  and were replaced or are listed as upstream review items anyway.)
 - *"The hardware or the monitor is faulty."* The same adapter and monitor work
   under Windows; every failure was driver-side.
 - *"The EDID FIFO path just needs better timing."* It never completes on this
