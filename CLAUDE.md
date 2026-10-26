@@ -126,7 +126,12 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
    `docs/pending/0001-fix-actually-try-the-htotal-adjustments-when-searchi.patch`
    but changes the mode the monitor gets, so apply it only with the hardware
    at hand.
-6. **Upstream review items** (expected requests, not started because they
+6. **USB bandwidth check is a no-op**: `fl2000_get_bytes_pix()` gets the
+   pixel clock in kHz but treats it as Hz (and the 80 % margin is inverted),
+   so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
+   USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
+   needs hardware to decide the right behavior on USB 2.0.
+7. **Upstream review items** (expected requests, not started because they
    change working behavior): reuse the in-tree `ite-it66121` bridge instead of
    `fl2000_it66121.c`, drop `drm_simple_display_pipe`, `drm_bridge_connector`
    + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`, a vblank timer instead of per-URB

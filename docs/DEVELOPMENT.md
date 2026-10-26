@@ -97,6 +97,7 @@ as a field failure, which is exactly why they are recorded here.
 | `fl2000_i2c_init()` failure path called `devres_free()` on an already-added devres → `BUG_ON` | Fixed: `devm_kzalloc()` + `devm_i2c_add_adapter()` |
 | `fl2000_drm_bind()` did not check `fl2000_stream_create()`/`fl2000_intr_create()` for `ERR_PTR` and had no unwinding | Fixed |
 | Stream disable could hang in `drain_workqueue()` if no URB was in flight to `up()` the semaphore the work slept on | Semaphore replaced by an atomic credit counter + wait queue; disable wakes the work |
+| `fl2000_get_bytes_pix()` divides a bandwidth in bytes/s by the pixel clock in **kHz** (callers pass `drm_display_mode.clock`), and the "80 % of USB bandwidth" macros compute `* 100 / 80` (125 %). The result is always ≥ 3, so every mode on every USB speed streams RGB888 and the bandwidth check never rejects anything | **Not changed.** With correct units, USB 3.0 (500 MB/s budget) keeps RGB888 up to 166 MHz (1080p60 unchanged) and drops to RGB565 up to 250 MHz; USB 2.0 (48 MB/s) would reject even 640x480@60. Whether the FL2000 tolerates bulk data arriving slower than the refresh rate (the README claims 1080p30 on USB 2.0) has to be checked on hardware before fixing |
 | FL2000 register bitfield unions and `fl2000_add_bitmask()` | Replaced by `GENMASK()`; proven identical with a mocked regmap that logs all 691 register writes of both versions |
 
 The FL2000 register helpers can be unit-tested this way: compile
