@@ -39,6 +39,7 @@ enum fl2000_interface {
 	FL2000_USBIF_INTERRUPT = 2,
 };
 
+/* Process context only: may sleep between retries */
 static inline int fl2000_submit_urb(struct urb *urb)
 {
 	int ret;
@@ -62,28 +63,22 @@ static inline int fl2000_submit_urb(struct urb *urb)
 	return ret;
 }
 
-static inline int fl2000_urb_status(struct usb_device *usb_dev, int status, int pipe)
+/* Called from URB completion handlers, i.e. in atomic context */
+static inline int fl2000_urb_status(struct usb_device *usb_dev, int status)
 {
-	int ret = status;
-
 	switch (status) {
 	case 0:
-		break;
-	case -EPIPE:
-		/* Stalled endpoint */
-		ret = usb_clear_halt(usb_dev, pipe);
-		break;
 	case -ECONNRESET:
 	case -ENOENT:
 	case -ESHUTDOWN:
-		/* URB was unlinked or the device is going away: not an error */
+		/* Success, or the URB was unlinked / the device is going away */
 		break;
 	default:
-		dev_err(&usb_dev->dev, "Nonzero urb status, %d\n", status);
+		dev_err_ratelimited(&usb_dev->dev, "Nonzero urb status, %d\n", status);
 		break;
 	}
 
-	return ret;
+	return status;
 }
 
 struct fl2000_timings {

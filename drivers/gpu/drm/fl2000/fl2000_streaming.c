@@ -155,18 +155,19 @@ static void fl2000_stream_data_completion(struct urb *urb)
 	struct fl2000_stream_buf *cur_sb = urb->transfer_buffer;
 	struct usb_device *usb_dev = urb->dev;
 	struct fl2000_stream *stream = urb->context;
+	unsigned long flags;
 
 	if (stream) {
-		spin_lock_irq(&stream->list_lock);
+		spin_lock_irqsave(&stream->list_lock, flags);
 		list_move_tail(&cur_sb->list, &stream->render_list);
-		spin_unlock_irq(&stream->list_lock);
+		spin_unlock_irqrestore(&stream->list_lock, flags);
 
 		drm_crtc_handle_vblank(stream->crtc);
 
 		/* Kick transmit workqueue */
 		up(&stream->work_sem);
 
-		fl2000_urb_status(usb_dev, urb->status, urb->pipe);
+		fl2000_urb_status(usb_dev, urb->status);
 	}
 
 	usb_free_urb(urb);

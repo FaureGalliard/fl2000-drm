@@ -47,7 +47,7 @@ static void fl2000_intr_completion(struct urb *urb)
 	struct usb_device *usb_dev = urb->dev;
 	struct fl2000_intr *intr = urb->context;
 
-	ret = fl2000_urb_status(usb_dev, urb->status, urb->pipe);
+	ret = fl2000_urb_status(usb_dev, urb->status);
 	if (ret) {
 		dev_err(&usb_dev->dev, "Stopping interrupts\n");
 		return;
@@ -64,7 +64,7 @@ static void fl2000_intr_completion(struct urb *urb)
 	urb->start_frame = -1;
 
 	/* Restart urb */
-	ret = fl2000_submit_urb(urb);
+	ret = usb_submit_urb(urb, GFP_ATOMIC);
 	if (ret)
 		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
 }
