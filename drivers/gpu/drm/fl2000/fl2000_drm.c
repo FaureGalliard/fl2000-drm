@@ -4,6 +4,8 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/math64.h>
+
 #include "fl2000.h"
 
 #define DRM_DRIVER_NAME "fl2000"
@@ -132,7 +134,7 @@ static const struct drm_mode_config_funcs fl2000_mode_config_funcs = {
 /* Integer division compute of ppm error */
 static u64 fl2000_pll_ppm_err(u64 clock_mil, u32 vco_clk, u32 divisor)
 {
-	u64 pll_clk_mil = (u64)vco_clk * FL2000_PLL_PRECISION / divisor;
+	u64 pll_clk_mil = div_u64((u64)vco_clk * FL2000_PLL_PRECISION, divisor);
 	u64 pll_clk_err;
 
 	/* Not using abs() here to avoid a possible overflow */
@@ -141,7 +143,7 @@ static u64 fl2000_pll_ppm_err(u64 clock_mil, u32 vco_clk, u32 divisor)
 	else
 		pll_clk_err = clock_mil - pll_clk_mil;
 
-	return pll_clk_err / (clock_mil / FL2000_PLL_PRECISION);
+	return div64_u64(pll_clk_err, div_u64(clock_mil, FL2000_PLL_PRECISION));
 }
 
 static inline u32 fl2000_pll_get_divisor(u64 clock_mil, u32 vco_clk, u64 *min_ppm_err)
@@ -231,7 +233,7 @@ static int fl2000_mode_calc(const struct drm_display_mode *mode,
 		 * maximum htotal is 10000 pix (no way) we get 10^19 max value and using u64 which
 		 * is 1.8*10^19 no overflow can occur.
 		 */
-		clock_mil_adjusted = clock_mil * (mode->htotal + d) / mode->htotal;
+		clock_mil_adjusted = div_u64(clock_mil * (mode->htotal + d), mode->htotal);
 
 		/* To keep precision use clock multiplied by 10^6 */
 		ppm_err = fl2000_pll_calc(clock_mil_adjusted, pll, &clock_calculated);
