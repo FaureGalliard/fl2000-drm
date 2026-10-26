@@ -37,6 +37,13 @@ feedback on before doing the larger reworks:
    rate. Is the DRM vblank timer the preferred way to pace this, as
    other USB display drivers without a hardware vblank do?
 
+4. The FL2000 exposes three USB interfaces, and the state they share
+   (regmap, I2C adapter, IT66121 client, component match) is kept as
+   drvdata and devres of the struct usb_device rather than of an
+   interface, so that it survives the unbind/rebind cycles of
+   usb_reset_device(). Is there a better established pattern for a
+   multi-interface device that needs this?
+
 Other known limitations: no fbdev emulation yet, no suspend/resume
 handling, damage clips are not used (every update converts the whole
 frame), and VGA-only FL2000 adapters are untested.

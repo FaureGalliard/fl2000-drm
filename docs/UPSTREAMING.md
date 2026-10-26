@@ -179,6 +179,11 @@ los plantea:
    *damage clips* no se usan.
 5. El IT66121 usa los callbacks legacy (`enable`/`disable`/`mode_set`) en vez
    de `atomic_*`.
+6. El estado compartido (regmap, adaptador I²C, IT66121) se guarda como
+   `drvdata`/devres del `struct usb_device`, que pertenece al driver genérico
+   `usb`, no a una interfaz nuestra. Es lo que permite sobrevivir a
+   `usb_reset_device()`, pero es poco habitual y probablemente lo
+   cuestionen; la carta de presentación lo pregunta (punto 4).
 
 Ninguno de estos puntos se ha tocado todavía porque cambian el
 comportamiento de un driver que funciona y no se pueden validar sin el
