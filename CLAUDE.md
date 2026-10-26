@@ -35,10 +35,18 @@ April 2027), not January.
 
 ## Environment
 
-- Target: Arch Linux, kernel 7.1.x, and upstream drm-misc-next. The code uses
-  current APIs only (`kzalloc_obj()`, `devm_drm_bridge_alloc()`, 3-arg
-  `bridge->attach`, `i2c_algorithm.xfer`) and has **no version guards** —
-  upstream does not accept them. Kernels older than 7.1 are not supported.
+- Target: upstream **drm-misc-next / Linus master (7.4 cycle)**, and Arch
+  Linux 7.1.x for testing. The driver source follows the newest API
+  (`struct drm_atomic_commit`, bridge `atomic_create_state`, `kzalloc_obj()`)
+  and has **no version guards** — upstream does not accept them. Older kernels
+  build only through the out-of-tree wrapper: the top-level `Makefile` probes
+  the target headers and force-includes `compat/fl2000_compat.h`, which maps
+  the new names to the old ones. `compat/` is never part of the upstream
+  patches. If a future rename breaks the 7.1 build, add a mapping there, not an
+  `#if` in the driver. Kernels older than 7.1 are not supported.
+- Re-check against Linus master before each submission. Legacy bridge
+  `.enable`/`.disable` were removed in the 7.4 cycle, and the driver stopped
+  compiling there until it moved to `atomic_enable`/`atomic_disable`.
 - Test hardware: UGREEN USB 3.0→HDMI dongle (`1d5c:2000`), LG 22MP55 monitor,
   HP Pavilion 15-cw1xxx with amdgpu, GNOME on Wayland.
 - The dongle also contains an internal USB2 hub and a C-Media audio chip; they

@@ -8,6 +8,7 @@
 #include <linux/hdmi.h>
 #include <linux/unaligned.h>
 
+#include <drm/drm_atomic_state_helper.h>
 #include <drm/drm_edid.h>
 
 #include "fl2000.h"
@@ -632,7 +633,8 @@ static void it66121_bridge_detach(struct drm_bridge *bridge)
 	cancel_delayed_work_sync(&priv->work);
 }
 
-static void it66121_bridge_enable(struct drm_bridge *bridge)
+static void it66121_bridge_atomic_enable(struct drm_bridge *bridge,
+					 struct drm_atomic_commit *state)
 {
 	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
@@ -643,7 +645,8 @@ static void it66121_bridge_enable(struct drm_bridge *bridge)
 		return;
 }
 
-static void it66121_bridge_disable(struct drm_bridge *bridge)
+static void it66121_bridge_atomic_disable(struct drm_bridge *bridge,
+					  struct drm_atomic_commit *state)
 {
 	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
@@ -775,8 +778,11 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 static const struct drm_bridge_funcs it66121_bridge_funcs = {
 	.attach = it66121_bridge_attach,
 	.detach = it66121_bridge_detach,
-	.enable = it66121_bridge_enable,
-	.disable = it66121_bridge_disable,
+	.atomic_create_state = drm_atomic_helper_bridge_create_state,
+	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
+	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
+	.atomic_enable = it66121_bridge_atomic_enable,
+	.atomic_disable = it66121_bridge_atomic_disable,
 	.mode_set = it66121_bridge_mode_set,
 };
 
