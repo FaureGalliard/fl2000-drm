@@ -33,10 +33,7 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 	u16 addr;
 	u8 idx;
 	u8 offset;
-	union {
-		u32 w;
-		u8 b[4];
-	} data;
+	u32 data;
 
 	addr = msgs[0].addr;
 	offset = msgs[0].buf[0] & I2C_XFER_ADDR_MASK;
@@ -63,23 +60,24 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 	 * 4-byte boundary and the requested byte is picked out of (or merged into) the dword.
 	 */
 	if (read) {
-		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data.w);
+		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data);
 		if (ret)
 			return ret;
 
-		msgs[1].buf[0] = data.b[idx];
+		msgs[1].buf[0] = data >> (idx * 8);
 	} else {
 		/*
 		 * Since the FL2000 I2C engine always operates on 4-byte messages, we need to read
 		 * before write in order not to corrupt the unrelated registers of the same dword.
 		 */
-		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data.w);
+		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data);
 		if (ret)
 			return ret;
 
-		data.b[idx] = msgs[0].buf[1];
+		data &= ~(0xffU << (idx * 8));
+		data |= (u32)msgs[0].buf[1] << (idx * 8);
 
-		ret = fl2000_i2c_write_dword(adapter->algo_data, addr, offset, &data.w);
+		ret = fl2000_i2c_write_dword(adapter->algo_data, addr, offset, &data);
 		if (ret)
 			return ret;
 	}

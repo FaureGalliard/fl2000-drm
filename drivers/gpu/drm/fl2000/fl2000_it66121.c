@@ -35,7 +35,7 @@ struct it66121_priv {
 	struct delayed_work work;
 	struct workqueue_struct *work_queue;
 
-	/* Serializes DDC engine users: EDID reads vs. interrupt work recovery */
+	/* Serializes users of the DDC engine (multi-step EDID FIFO reads) */
 	struct mutex ddc_lock;
 
 	struct regmap_field *irq_pending;
@@ -287,15 +287,20 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
 	}
 }
 
+/*
+ * Acknowledges pending IT66121 interrupts. The IT66121 interrupt line is
+ * routed to the FL2000, which reports it on its own interrupt endpoint (see
+ * fl2000_interrupt.c); hotplug is handled from there, by re-probing the
+ * connector. The interrupt sources themselves are not decoded here.
+ */
 static void it66121_intr_work(struct work_struct *work_item)
 {
 	int ret;
 	unsigned int val;
-	struct delayed_work *dwork = container_of(work_item, struct delayed_work, work);
+	struct delayed_work *dwork = to_delayed_work(work_item);
 	struct it66121_priv *priv = container_of(dwork, struct it66121_priv, work);
 	/* Do not use bridge.dev here: it is NULL while the bridge is detached */
 	struct device *dev = &priv->client->dev;
-	bool event = false;
 
 	ret = regmap_field_read(priv->irq_pending, &val);
 	if (ret) {
@@ -303,55 +308,15 @@ static void it66121_intr_work(struct work_struct *work_item)
 		return;
 	}
 
-	/*
-	 * There are at least 5 registers that can source interrupt:
-	 *  - 0x06 (IT66121_INT_STATUS_1)
-	 *  - 0x07 (IT66121_INT_STATUS_2)
-	 *  - 0x08 (IT66121_INT_STATUS_3)
-	 *  - 0xEE (IT66121_EXT_INT_STATUS_1)
-	 *  - 0xF0 (IT66121_EXT_INT_STATUS_2)
-	 * Only the DDC and HPD events of IT66121_INT_STATUS_1 are processed.
-	 */
 	if (val) {
-		union it66121_int_status_1_reg status_1;
-
-		ret = regmap_read(priv->regmap, IT66121_INT_STATUS_1, &status_1.val);
+		ret = regmap_read(priv->regmap, IT66121_INT_STATUS_1, &val);
 		if (ret) {
 			dev_err(dev, "Cannot read IT66121_INT_STATUS_1 (%d)\n", ret);
 			return;
 		}
 
 		regmap_field_write(priv->clr_irq, 1);
-
-		if (status_1.ddc_fifo_err || status_1.ddc_bus_hang || status_1.ddc_noack) {
-			dev_dbg(dev, "DDC recovery: fifo_err=%u bus_hang=%u noack=%u\n",
-				status_1.ddc_fifo_err, status_1.ddc_bus_hang,
-				status_1.ddc_noack);
-
-			mutex_lock(&priv->ddc_lock);
-			if (status_1.ddc_fifo_err)
-				it66121_clear_ddc_fifo(priv);
-			if (status_1.ddc_bus_hang || status_1.ddc_noack)
-				it66121_abort_ddc_ops(priv);
-			mutex_unlock(&priv->ddc_lock);
-		}
-
-		if (status_1.hpd_plug) {
-			it66121_is_hpd_detect(priv);
-			event = true;
-			dev_dbg(dev, "Monitor HPD: %s\n",
-				priv->conn_status == connector_status_connected ? "connected" :
-				priv->conn_status == connector_status_disconnected ?
-					"disconnected" : "unknown");
-			if (priv->conn_status == connector_status_disconnected) {
-				drm_edid_free(priv->drm_edid);
-				priv->drm_edid = NULL;
-			}
-		}
 	}
-
-	if (event)
-		drm_bridge_hpd_notify(&priv->bridge, priv->conn_status);
 
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 }
@@ -837,13 +802,8 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 	int ret;
 	u8 id_regs[] = { IT66121_VENDOR_ID_1, IT66121_VENDOR_ID_2, IT66121_DEVICE_ID_1,
 			 IT66121_DEVICE_ID_2 };
-	union {
-		struct {
-			u16 vendor;
-			u16 device;
-		};
-		u8 b[ARRAY_SIZE(id_regs)];
-	} id;
+	u8 id[ARRAY_SIZE(id_regs)];
+	u16 vendor, device;
 
 	dev_dbg(&adapter->dev, "Detecting IT66121 at address 0x%X on %s\n", address,
 		adapter->name);
@@ -858,7 +818,7 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 	for (int i = 0; i < ARRAY_SIZE(id_regs); i++) {
 		struct i2c_msg msgs[] = {
 			{ .addr = address, .flags = 0, .len = 1, .buf = &id_regs[i] },
-			{ .addr = address, .flags = I2C_M_RD, .len = 1, .buf = &id.b[i] }
+			{ .addr = address, .flags = I2C_M_RD, .len = 1, .buf = &id[i] }
 		};
 
 		ret = i2c_transfer(adapter, msgs, ARRAY_SIZE(msgs));
@@ -868,13 +828,15 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 		}
 	}
 
-	if (id.vendor != VENDOR_ID || (id.device & ~REVISION_MASK) != DEVICE_ID) {
-		dev_dbg(&adapter->dev, "IT66121 not found (0x%X-0x%X)\n", id.vendor, id.device);
+	vendor = get_unaligned_le16(&id[0]);
+	device = get_unaligned_le16(&id[2]);
+	if (vendor != VENDOR_ID || (device & ~REVISION_MASK) != DEVICE_ID) {
+		dev_dbg(&adapter->dev, "IT66121 not found (0x%X-0x%X)\n", vendor, device);
 		return -ENODEV;
 	}
 
 	dev_dbg(&adapter->dev, "IT66121 found, revision %d\n",
-		(id.device & REVISION_MASK) >> REVISION_SHIFT);
+		(device & REVISION_MASK) >> REVISION_SHIFT);
 
 	return 0;
 }

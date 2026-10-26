@@ -29,20 +29,14 @@
 
 #define IT66121_INT_CONTROL  0x05
 #define IT66121_INT_STATUS_1 0x06
-union it66121_int_status_1_reg {
-	u32 val;
-	struct {
-		u32 __unused	    : 24;
-		u32 aud_overflow    : 1;
-		u32 romacq_noack    : 1;
-		u32 ddc_noack	    : 1;
-		u32 ddc_fifo_err    : 1;
-		u32 romacq_bus_hang : 1;
-		u32 ddc_bus_hang    : 1;
-		u32 rx_sense	    : 1;
-		u32 hpd_plug	    : 1;
-	} __aligned(4) __packed;
-};
+#define IT66121_INT_STATUS_1_HPD		BIT(0)
+#define IT66121_INT_STATUS_1_RX_SENSE		BIT(1)
+#define IT66121_INT_STATUS_1_DDC_BUS_HANG	BIT(2)
+#define IT66121_INT_STATUS_1_ROMACQ_BUS_HANG	BIT(3)
+#define IT66121_INT_STATUS_1_DDC_FIFO_ERR	BIT(4)
+#define IT66121_INT_STATUS_1_DDC_NOACK		BIT(5)
+#define IT66121_INT_STATUS_1_ROMACQ_NOACK	BIT(6)
+#define IT66121_INT_STATUS_1_AUD_OVERFLOW	BIT(7)
 
 #define IT66121_INT_STATUS_2	 0x07
 #define IT66121_INT_STATUS_3	 0x08
