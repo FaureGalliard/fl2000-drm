@@ -45,7 +45,9 @@ struct fl2000_stream {
 	u32 bytes_pix;
 	struct work_struct work;
 	struct workqueue_struct *work_queue;
-	struct semaphore work_sem;
+	/* URBs the work may still submit: limits the frames in flight */
+	atomic_t credits;
+	wait_queue_head_t credits_wq;
 	bool enabled;
 	struct usb_anchor anchor;
 };
@@ -164,8 +166,9 @@ static void fl2000_stream_data_completion(struct urb *urb)
 
 		drm_crtc_handle_vblank(stream->crtc);
 
-		/* Kick transmit workqueue */
-		up(&stream->work_sem);
+		/* Return the credit and kick the transmit work */
+		atomic_inc(&stream->credits);
+		wake_up(&stream->credits_wq);
 
 		fl2000_urb_status(usb_dev, urb->status);
 	}
@@ -182,13 +185,17 @@ static void fl2000_stream_work(struct work_struct *work)
 	struct fl2000_stream_buf *last_sb;
 	struct urb *data_urb;
 
-	while (stream->enabled) {
-		ret = down_interruptible(&stream->work_sem);
+	while (READ_ONCE(stream->enabled)) {
+		/* Interruptible sleep: an idle stream may wait here indefinitely */
+		ret = wait_event_interruptible(stream->credits_wq, !READ_ONCE(stream->enabled) ||
+					       atomic_add_unless(&stream->credits, -1, 0));
 		if (ret) {
 			dev_err(&usb_dev->dev, "Work interrupt error %d\n", ret);
-			stream->enabled = false;
+			WRITE_ONCE(stream->enabled, false);
 			return;
 		}
+		if (!READ_ONCE(stream->enabled))
+			break;
 
 		spin_lock_irq(&stream->list_lock);
 
@@ -237,7 +244,7 @@ static void fl2000_stream_work(struct work_struct *work)
 		data_urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!data_urb) {
 			dev_err(&usb_dev->dev, "Data URB allocation error\n");
-			stream->enabled = false;
+			WRITE_ONCE(stream->enabled, false);
 			return;
 		}
 
@@ -257,7 +264,7 @@ static void fl2000_stream_work(struct work_struct *work)
 		if (ret) {
 			dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
 			usb_free_urb(data_urb);
-			stream->enabled = false;
+			WRITE_ONCE(stream->enabled, false);
 		}
 	}
 }
@@ -366,13 +373,10 @@ int fl2000_stream_enable(struct fl2000_stream *stream)
 	if (WARN_ON(list_empty(&stream->render_list)))
 		return -ENOMEM;
 
-	sema_init(&stream->work_sem, 0);
-	stream->enabled = true;
+	/* Start the transmit work with the minimum number of buffers in flight */
+	atomic_set(&stream->credits, FL2000_SB_MIN);
+	WRITE_ONCE(stream->enabled, true);
 	queue_work(stream->work_queue, &stream->work);
-
-	/* Kick transmit workqueue with minimum buffers submitted */
-	for (int i = 0; i < FL2000_SB_MIN; i++)
-		up(&stream->work_sem);
 
 	return 0;
 }
@@ -381,7 +385,9 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
 {
 	struct fl2000_stream_buf *cur_sb;
 
-	stream->enabled = false;
+	/* Wake the work up even when no URB is in flight to complete */
+	WRITE_ONCE(stream->enabled, false);
+	wake_up(&stream->credits_wq);
 
 	drain_workqueue(stream->work_queue);
 
@@ -433,7 +439,8 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct dr
 	INIT_LIST_HEAD(&stream->wait_list);
 	spin_lock_init(&stream->list_lock);
 	init_usb_anchor(&stream->anchor);
-	sema_init(&stream->work_sem, 0);
+	atomic_set(&stream->credits, 0);
+	init_waitqueue_head(&stream->credits_wq);
 	stream->usb_dev = usb_dev;
 	stream->crtc = crtc;
 
