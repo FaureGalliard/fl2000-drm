@@ -6,6 +6,8 @@
 
 #include <linux/math64.h>
 
+#include <drm/drm_gem_atomic_helper.h>
+
 #include "fl2000.h"
 
 #define DRM_DRIVER_NAME "fl2000"
@@ -273,38 +275,6 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 	return MODE_OK;
 }
 
-/* The whole frame is always converted: @rect is currently unused */
-static void fl2000_dirty(struct drm_framebuffer *fb, struct drm_rect *rect)
-{
-	int ret;
-	int idx;
-	struct drm_device *drm = fb->dev;
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
-	struct iosys_map map[DRM_FORMAT_MAX_PLANES];
-	struct iosys_map data[DRM_FORMAT_MAX_PLANES];
-
-	if (!drm_dev_enter(drm, &idx))
-		return;
-
-	ret = drm_gem_fb_vmap(fb, map, data);
-	if (ret)
-		goto out_exit;
-
-	ret = drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE);
-	if (ret)
-		goto out_vunmap;
-
-	fl2000_stream_compress(drm_if->stream, data[0].vaddr, fb->height, fb->width,
-			       fb->pitches[0]);
-
-	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
-
-out_vunmap:
-	drm_gem_fb_vunmap(fb, map);
-out_exit:
-	drm_dev_exit(idx);
-}
-
 /*
  * Primary plane
  */
@@ -327,20 +297,43 @@ static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_
 						   false, false);
 }
 
+/*
+ * The whole visible frame is converted on every update with damage: the
+ * stream rotates through several buffers, so a partial update would need a
+ * persistent copy of the frame to patch.
+ */
 static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
 {
 	struct drm_plane_state *old_plane_state = drm_atomic_get_old_plane_state(state, plane);
 	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
-	struct drm_rect rect;
+	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
+	struct drm_framebuffer *fb = plane_state->fb;
+	struct drm_rect damage, clip;
+	int idx;
 
-	if (!plane_state->fb)
+	if (!fb)
 		return; /* plane is disabled */
 
-	if (drm_atomic_helper_damage_merged(old_plane_state, plane_state, &rect))
-		fl2000_dirty(plane_state->fb, &rect);
+	if (!drm_atomic_helper_damage_merged(old_plane_state, plane_state, &damage))
+		return;
+
+	if (drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE))
+		return;
+
+	if (drm_dev_enter(plane->dev, &idx)) {
+		/* The plane covers the whole CRTC (no scaling or positioning) */
+		drm_rect_fp_to_int(&clip, &plane_state->src);
+		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0], fb, &clip,
+				       &shadow_plane_state->fmtcnv_state);
+		drm_dev_exit(idx);
+	}
+
+	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 }
 
 static const struct drm_plane_helper_funcs fl2000_plane_helper_funcs = {
+	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
 	.atomic_check = fl2000_plane_atomic_check,
 	.atomic_update = fl2000_plane_atomic_update,
 };
@@ -349,9 +342,7 @@ static const struct drm_plane_funcs fl2000_plane_funcs = {
 	.update_plane = drm_atomic_helper_update_plane,
 	.disable_plane = drm_atomic_helper_disable_plane,
 	.destroy = drm_plane_cleanup,
-	.atomic_create_state = drm_atomic_helper_plane_create_state,
-	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+	DRM_GEM_SHADOW_PLANE_FUNCS,
 };
 
 /*

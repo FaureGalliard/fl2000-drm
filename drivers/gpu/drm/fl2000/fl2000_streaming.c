@@ -9,8 +9,12 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/iosys-map.h>
 #include <linux/scatterlist.h>
 #include <linux/vmalloc.h>
+
+#include <drm/drm_format_helper.h>
+#include <drm/drm_rect.h>
 
 #include "fl2000.h"
 
@@ -269,32 +273,24 @@ static void fl2000_stream_work(struct work_struct *work)
 	}
 }
 
-static void fl2000_xrgb8888_to_rgb888_line(u8 *dbuf, u32 *sbuf, u32 pixels)
+/*
+ * The FL2000 expects the two 32-bit halves of every 64-bit word of the frame
+ * swapped. The frame buffer size is a multiple of 8 bytes.
+ */
+static void fl2000_swap_dword_pairs(void *buf, size_t len)
 {
-	unsigned int xx = 0;
+	u32 *words = buf;
 
-	for (unsigned int x = 0; x < pixels; x++) {
-		dbuf[xx++ ^ 4] = (sbuf[x] & 0x000000FF) >> 0;
-		dbuf[xx++ ^ 4] = (sbuf[x] & 0x0000FF00) >> 8;
-		dbuf[xx++ ^ 4] = (sbuf[x] & 0x00FF0000) >> 16;
-	}
+	for (size_t i = 0; i + 1 < len / sizeof(*words); i += 2)
+		swap(words[i], words[i + 1]);
 }
 
-static void fl2000_xrgb8888_to_rgb565_line(u16 *dbuf, u32 *sbuf, u32 pixels)
-{
-	for (unsigned int x = 0; x < pixels; x++) {
-		u16 val565 = ((sbuf[x] & 0x00F80000) >> 8) | ((sbuf[x] & 0x0000FC00) >> 5) |
-			     ((sbuf[x] & 0x000000F8) >> 3);
-		dbuf[x ^ 2] = val565;
-	}
-}
-
-void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned int height,
-			    unsigned int width, unsigned int pitch)
+void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
+			    const struct drm_framebuffer *fb, const struct drm_rect *clip,
+			    struct drm_format_conv_state *fmtcnv_state)
 {
 	struct fl2000_stream_buf *cur_sb;
-	void *dst;
-	u32 dst_line_len;
+	struct iosys_map dst;
 
 	/* Take a free buffer and own it (off all lists) for the conversion */
 	spin_lock_irq(&stream->list_lock);
@@ -313,24 +309,20 @@ void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned in
 	 * across it starves the system (e.g. amdgpu IRQs -> fence fallback
 	 * timers, laggy desktop). cur_sb is owned here so no lock is needed.
 	 */
-	dst = cur_sb->vaddr;
-	dst_line_len = width * stream->bytes_pix;
+	iosys_map_set_vaddr(&dst, cur_sb->vaddr);
 
-	for (unsigned int y = 0; y < height; y++) {
-		switch (stream->bytes_pix) {
-		case 2:
-			fl2000_xrgb8888_to_rgb565_line(dst, src, width);
-			break;
-		case 3:
-			fl2000_xrgb8888_to_rgb888_line(dst, src, width);
-			break;
-		default:
-			/* Rejected by fl2000_get_bytes_pix() */
-			break;
-		}
-		src += pitch;
-		dst += dst_line_len;
+	switch (stream->bytes_pix) {
+	case 2:
+		drm_fb_xrgb8888_to_rgb565(&dst, NULL, src, fb, clip, fmtcnv_state);
+		break;
+	case 3:
+		drm_fb_xrgb8888_to_rgb888(&dst, NULL, src, fb, clip, fmtcnv_state);
+		break;
+	default:
+		/* Rejected by fl2000_get_bytes_pix() */
+		break;
 	}
+	fl2000_swap_dword_pairs(cur_sb->vaddr, stream->buf_size);
 
 	spin_lock_irq(&stream->list_lock);
 	list_add_tail(&cur_sb->list, &stream->transmit_list);

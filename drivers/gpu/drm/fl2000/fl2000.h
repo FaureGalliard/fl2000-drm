@@ -113,8 +113,12 @@ void fl2000_stream_destroy(struct usb_device *usb_dev);
 
 /* Streaming interface */
 int fl2000_stream_mode_set(struct fl2000_stream *stream, int pixels, u32 bytes_pix);
-void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned int height,
-			    unsigned int width, unsigned int pitch);
+struct drm_format_conv_state;
+struct drm_rect;
+struct iosys_map;
+void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
+			    const struct drm_framebuffer *fb, const struct drm_rect *clip,
+			    struct drm_format_conv_state *fmtcnv_state);
 int fl2000_stream_enable(struct fl2000_stream *stream);
 void fl2000_stream_disable(struct fl2000_stream *stream);
 
