@@ -3,10 +3,15 @@ drm/fl2000: Add KMS display pipeline
 Register the DRM device once all FL2000 interfaces are bound and the
 IT66121 component is available, and connect the pieces:
 
-- a single plane/CRTC/encoder pipeline with GEM SHMEM framebuffers and
-  XRGB8888 as the only format. The framebuffer is only read by the CPU,
-  so it does not need to be physically contiguous
-- mode validation and PLL/timing programming for the requested mode
+- a single plane/CRTC/encoder pipeline with GEM SHMEM framebuffers,
+  accessed through the shadow-plane helpers, and XRGB8888 as the only
+  format. The framebuffer is only read by the CPU, so it does not need
+  to be physically contiguous
+- mode validation and PLL search in the CRTC's atomic_check (which may
+  adjust htotal and the clock in adjusted_mode), and FL2000 programming
+  in mode_set_nofb, before the bridge's mode_set
+- vblank from the DRM vblank timer, as the FL2000 has no vblank
+  interrupt, and fbdev emulation
 - the FL2000 interrupt endpoint, which reports monitor and IT66121
   events and triggers a hotplug event
 

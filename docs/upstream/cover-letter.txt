@@ -35,32 +35,33 @@ feedback on before doing the larger reworks:
    while the FL2000 side provides the DDC adapter to a bridge connector,
    or keep the IT66121 handling private to this driver?
 
-2. The display pipeline still uses drm_simple_display_pipe and the
-   bridge still creates its own connector. I plan to convert to regular
-   atomic plane/CRTC/encoder helpers and drm_bridge_connector for v2,
-   which depends on the answer to (1).
+2. The bridge still creates its own connector. Converting it to
+   DRM_BRIDGE_ATTACH_NO_CONNECTOR and drm_bridge_connector is planned
+   for v2, but depends on the answer to (1).
 
-3. Vblank events are currently signalled from the bulk URB completion,
-   so they follow the USB transfer rate rather than the mode's refresh
-   rate. Is the DRM vblank timer the preferred way to pace this, as
-   other USB display drivers without a hardware vblank do?
-
-4. The FL2000 exposes three USB interfaces, and the state they share
+3. The FL2000 exposes three USB interfaces, and the state they share
    (regmap, I2C adapter, IT66121 client, component match) is kept as
    drvdata and devres of the struct usb_device rather than of an
    interface, so that it survives the unbind/rebind cycles of
    usb_reset_device(). Is there a better established pattern for a
    multi-interface device that needs this?
 
-Other known limitations: no fbdev emulation yet, no suspend/resume
-handling, damage clips are not used (every update converts the whole
-frame), the USB bandwidth check that should switch to RGB565 on slow
-links is not functional yet (RGB888 is always used), and VGA-only
-FL2000 adapters are untested.
+The rest of the pipeline follows the current helpers: regular atomic
+plane/CRTC/encoder objects, GEM SHMEM with shadow-plane access, the
+drm_fb_xrgb8888_to_*() conversion helpers, the DRM vblank timer (the
+FL2000 has no vblank interrupt) and fbdev emulation through
+drm_client_setup().
+
+Other known limitations: no suspend/resume handling, damage clips only
+decide whether to update (every update converts the whole frame, since
+the stream rotates through several buffers), the USB bandwidth check
+that should switch to RGB565 on slow links is not functional yet
+(RGB888 is always used), and VGA-only FL2000 adapters are untested.
 
 Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
 to HDMI adapter and a 1920x1080 monitor: EDID, mode setting and the
-desktop work. The driver builds without warnings with W=1 and the
-patch passes checkpatch --strict.
+desktop work. Every patch builds without warnings with W=1 on top of
+the current mainline development tree, and the series passes
+checkpatch --strict.
 
 Thanks,

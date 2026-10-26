@@ -10,14 +10,14 @@
  static const struct usb_device_id fl2000_id_table[] = {
  	{ USB_DEVICE_INTERFACE_CLASS(USB_VENDOR_FRESCO_LOGIC, USB_PRODUCT_FL2000, USB_CLASS_AV) },
  	{},
-@@ -29,39 +26,9 @@
+@@ -29,38 +26,8 @@
  	struct regmap *regmap;
  	struct i2c_adapter *adapter;
  	struct i2c_client *bridge_client;
 -	struct component_match *match;
  	int active_if;
  };
- 
+-
 -static const struct component_master_ops fl2000_master_ops = {
 -	.bind = fl2000_drm_bind,
 -	.unbind = fl2000_drm_unbind,
@@ -46,19 +46,18 @@
 -
 -	return 0;
 -}
--
+ 
  static struct fl2000_devs *fl2000_get_devices(struct usb_device *usb_dev)
  {
- 	struct fl2000_devs *devs;
-@@ -82,8 +49,6 @@
+@@ -81,8 +48,6 @@
+ 		dev_err(&usb_dev->dev, "Cannot initialize I2C adapter (%pe)\n", devs->adapter);
  		return ERR_CAST(devs->adapter);
  	}
- 
--	component_match_add(&devs->adapter->dev, &devs->match, fl2000_compare, devs->adapter);
 -
+-	component_match_add(&devs->adapter->dev, &devs->match, fl2000_compare, devs->adapter);
+ 
  	dev_set_drvdata(&usb_dev->dev, devs);
  
- 	return devs;
 @@ -173,16 +138,6 @@
  		break;
  	}

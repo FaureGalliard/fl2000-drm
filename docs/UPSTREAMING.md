@@ -240,58 +240,54 @@ exactamente lo que imprima sobre el árbol actualizado.
 
 La serie se marca `RFC PATCH` porque hay cambios de diseño que conviene
 acordar con los mantenedores antes de hacerlos. La carta de presentación ya
-los plantea:
+los plantea.
 
-1. **IT66121 duplicado.** Ya existe `drivers/gpu/drm/bridge/ite-it66121.c`.
-   Lo normal es que pidan reutilizarlo. El obstáculo es real: ese driver se
+**Ya hecho (migración de octubre de 2026, pendiente de probar en hardware):**
+
+- planos/CRTC/encoder propios en lugar de `drm_simple_display_pipe`, con el
+  cálculo del PLL en `atomic_check`;
+- *shadow-plane helpers* y `drm_fb_xrgb8888_to_rgb888()`/`_rgb565()`, con el
+  intercambio de palabras sobre el búfer completo (esto arregla los anchos
+  raros, como 1366 px);
+- vblank por el temporizador de DRM (`DRM_CRTC_VBLANK_TIMER_FUNCS`), a la tasa
+  del modo;
+- fbdev con `drm_client_setup()`;
+- callbacks `atomic_enable`/`atomic_disable` en el bridge, ya que los antiguos
+  desaparecen en 7.4;
+- `REGCACHE_MAPLE` y `kzalloc_objs()`.
+
+**Pendiente:**
+
+1. **IT66121 duplicado.** Ya existe `drivers/gpu/drm/bridge/ite-it66121.c`, y
+   lo normal es que pidan reutilizarlo. El obstáculo es real: ese driver se
    instancia por device tree y lee el EDID por el motor DDC del IT66121, que
-   en este adaptador nunca funciona (el DDC del monitor cuelga del bus I²C del
-   FL2000). La carta propone instanciarlo desde el driver USB con un
+   en este adaptador nunca funciona porque el DDC del monitor cuelga del bus
+   I²C del FL2000. La carta propone instanciarlo desde el driver USB con un
    *software node* y usar `drm_bridge_connector` con el DDC del FL2000.
-2. **`drm_simple_display_pipe` está obsoleto** para drivers nuevos: habrá que
-   pasar a plano/CRTC/encoder con los helpers atómicos normales, y que el
-   bridge soporte `DRM_BRIDGE_ATTACH_NO_CONNECTOR`.
-3. **Vblank falso:** se señala en cada URB completado. Lo esperable es usar el
-   temporizador de vblank de DRM (`drm_crtc_vblank_start_timer()` /
-   `DRM_CRTC_VBLANK_TIMER_FUNCS`) y pacing a la tasa de refresco. Coincide con
-   el "Open issue 2" de `CLAUDE.md`.
-4. **Sin fbdev** (`drm_client_setup()`), sin suspend/resume real, y las
-   *damage clips* no se usan.
-5. El IT66121 usa los callbacks legacy (`enable`/`disable`/`mode_set`) en vez
-   de `atomic_*`.
-6. El estado compartido (regmap, adaptador I²C, IT66121) se guarda como
-   `drvdata`/devres del `struct usb_device`, que pertenece al driver genérico
-   `usb`, no a una interfaz nuestra. Es lo que permite sobrevivir a
-   `usb_reset_device()`, pero es poco habitual y probablemente lo
-   cuestionen; la carta de presentación lo pregunta (punto 4).
-
-7. **Framework de componentes.** `drivers/gpu/drm/drm_drv.c` desaconseja
-   usar componentes cuando existe una interfaz estándar como `drm_bridge`. Lo
-   esperable es crear el bridge en el probe y usar `drm_bridge_attach()` y
-   `devm_drm_bridge_add()`.
-8. **El dispositivo DRM cuelga del adaptador I²C.** Lo esperable es que cuelgue
+2. **Bridge sin conector propio** (`DRM_BRIDGE_ATTACH_NO_CONNECTOR` +
+   `drm_bridge_connector`). Para compilar fuera del árbol hace falta
+   `CONFIG_DRM_BRIDGE_CONNECTOR`, que en x86 solo está activo si algún driver
+   lo selecciona. Compruébalo en tu laptop con
+   `zgrep DRM_BRIDGE_CONNECTOR /proc/config.gz` antes de hacerlo.
+3. **Callbacks antiguos que quedan en el bridge** (`mode_set`) e infoframes a
+   mano: lo moderno es `DRM_BRIDGE_OP_HDMI`.
+4. **Estado compartido en el `struct usb_device`.** El regmap, el adaptador
+   I²C y el IT66121 se guardan como `drvdata`/devres del dispositivo USB, que
+   pertenece al driver genérico `usb` y no a una interfaz nuestra. Es lo que
+   permite sobrevivir a `usb_reset_device()`, pero es poco habitual y
+   probablemente lo cuestionen; la carta lo pregunta.
+5. **Framework de componentes.** `drivers/gpu/drm/drm_drv.c` desaconseja usar
+   componentes cuando existe una interfaz estándar como `drm_bridge`. Lo
+   esperable es crear el bridge en el probe y usar `drm_bridge_attach()`.
+6. **El dispositivo DRM cuelga del adaptador I²C.** Lo esperable es que cuelgue
    de la interfaz USB, con
-   `drm_dev_set_dma_dev(drm, usb_intf_get_dma_device(intf))`, como hacen
-   udl, gud y appletbdrm. Esto afecta a PRIME y a la topología de udev.
-9. **Una interfaz y no tres.** Lo idiomático es enlazar una sola interfaz y
-   reclamar las otras con `usb_driver_claim_interface()`, con el estado
-   ligado a la interfaz (`usb_set_intfdata()`) o a `drmm_*`. Klogg y el PR #86
-   ya lo hicieron así.
-10. **Helpers que ya existen:**
-    - *shadow-plane* (`DRM_GEM_SHADOW_PLANE_HELPER_FUNCS`) en vez de mapear el
-      framebuffer a mano;
-    - `drm_fb_xrgb8888_to_rgb888()`/`_rgb565()` (`drm_format_helper.h`). El
-      FL2000 necesita además intercambiar las dos mitades de 32 bits de cada
-      palabra de 64, cosa que no hace ningún helper; hay que justificarlo;
-    - iteradores de *damage*;
-    - `DRM_BRIDGE_OP_HDMI` para los infoframes;
-    - `REGCACHE_MAPLE` en lugar de `REGCACHE_RBTREE`.
-11. **Posible bug con anchos raros.** El intercambio de mitades de 64 bits se
-    reinicia en cada línea. Con anchos cuyo tamaño de línea no es múltiplo de
-    8 bytes (1366 px en RGB888, por ejemplo), la imagen saldría
-    desordenada. Con 1920 px no ocurre. Hay que comprobarlo con un modo
-    1366x768.
+   `drm_dev_set_dma_dev(drm, usb_intf_get_dma_device(intf))`, como hacen udl,
+   gud y appletbdrm. Afecta a PRIME y a la topología de udev.
+7. **Una interfaz y no tres.** Lo idiomático es enlazar una sola interfaz y
+   reclamar las otras con `usb_driver_claim_interface()`, con el estado ligado
+   a la interfaz o a `drmm_*`. Klogg y el PR #86 ya lo hicieron así.
+8. **Suspend/resume real** (`drm_mode_config_helper_suspend()`).
 
-Ninguno de estos puntos se ha tocado todavía porque cambian el
-comportamiento de un driver que funciona y no se pueden validar sin el
-adaptador; cada uno es una tarea para hacer con el hardware delante.
+Los puntos 4 a 7 son un solo cambio grande: sustituyen el modelo de ciclo de
+vida que arregló los cuelgues al desconectar (ver "Non-obvious invariants" en
+`CLAUDE.md`). Hay que hacerlo con el adaptador delante.

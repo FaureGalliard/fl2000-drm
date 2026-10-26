@@ -1,6 +1,6 @@
 --- a/fl2000.h
 +++ b/fl2000.h
-@@ -39,48 +39,6 @@
+@@ -42,48 +42,6 @@
  	FL2000_USBIF_INTERRUPT = 2,
  };
  
@@ -49,19 +49,23 @@
  struct fl2000_timings {
  	u32 hactive;
  	u32 htotal;
-@@ -103,23 +61,6 @@
+@@ -106,27 +64,6 @@
  #define I2C_RDWR_INTERVAL 200
  #define I2C_RDWR_TIMEOUT  (256 * 1000)
  
 -/* Streaming transfer task */
 -struct fl2000_stream;
--struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct drm_crtc *crtc);
+-struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev);
 -void fl2000_stream_destroy(struct usb_device *usb_dev);
 -
 -/* Streaming interface */
 -int fl2000_stream_mode_set(struct fl2000_stream *stream, int pixels, u32 bytes_pix);
--void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned int height,
--			    unsigned int width, unsigned int pitch);
+-struct drm_format_conv_state;
+-struct drm_rect;
+-struct iosys_map;
+-void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
+-			    const struct drm_framebuffer *fb, const struct drm_rect *clip,
+-			    struct drm_format_conv_state *fmtcnv_state);
 -int fl2000_stream_enable(struct fl2000_stream *stream);
 -void fl2000_stream_disable(struct fl2000_stream *stream);
 -
@@ -73,7 +77,7 @@
  /* I2C adapter interface creation */
  struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev);
  
-@@ -138,8 +79,4 @@
+@@ -145,8 +82,4 @@
  int fl2000_check_interrupt(struct usb_device *usb_dev);
  int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data);
  

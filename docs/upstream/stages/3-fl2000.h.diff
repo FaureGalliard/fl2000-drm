@@ -1,6 +1,6 @@
 --- a/fl2000.h
 +++ b/fl2000.h
-@@ -115,11 +115,6 @@
+@@ -122,11 +122,6 @@
  int fl2000_stream_enable(struct fl2000_stream *stream);
  void fl2000_stream_disable(struct fl2000_stream *stream);
  
@@ -12,7 +12,7 @@
  /* I2C adapter interface creation */
  struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev);
  
-@@ -138,8 +133,4 @@
+@@ -145,8 +140,4 @@
  int fl2000_check_interrupt(struct usb_device *usb_dev);
  int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data);
  

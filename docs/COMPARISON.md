@@ -13,13 +13,14 @@ salen de leer el código de cada repositorio en esa fecha.
 | HDMI (IT66121) probado en hardware | **sí**, UGREEN + LG 1080p | sí, un adaptador, vía QEMU/KVM | no indicado | **no** (según su README) | sí, Hagibis, 1080p50–75 |
 | VGA | no | no | **sí** | **sí** (detección por carga) | no |
 | EDID por el bus I²C del FL2000 (0x50) | **sí** (desde jul-2026) | no (solo DDC del IT66121) | conector VGA con DDC | no | **sí** (desde oct-2026) |
-| `simple_display_pipe` (obsoleto) | **todavía sí** | quitado | quitado | no lo usa | no lo usa |
+| `simple_display_pipe` (obsoleto) | quitado | quitado | quitado | no lo usa | no lo usa |
 | Bridge sin conector (`ATTACH_NO_CONNECTOR`) | no | sí | sí | — | — |
 | `usb_driver_claim_interface` (una interfaz reclama las otras) | no | sí | sí | no | no |
-| Helpers de conversión `drm_fb_xrgb8888_to_*` | no | no (SIMD propio) | **sí** | no (propio, con test) | no |
-| fbdev (`drm_client_setup`) | no | sí | sí | sí | sí |
+| Helpers de conversión `drm_fb_xrgb8888_to_*` | **sí** | no (SIMD propio) | **sí** | no (propio, con test) | no |
+| fbdev (`drm_client_setup`) | sí | sí | sí | sí | sí |
 | DMA device (`drm_dev_set_dma_dev`) | no | sí | no | sí | sí |
 | Suspend/resume real | no | sí | sí | sí | — |
+| Vblank por temporizador de DRM | **sí** | no | no | no | no |
 | RGB565 según ancho de banda | roto (unidades) | sí | — | parámetro `max_bpp` | — |
 | Compila en Linus master (7.4) | **sí** | no (usa API vieja) | no verificado | no (usa API vieja) | no (usa API vieja) |
 | Empaquetado | install.sh | DKMS + paquetes Debian | DKMS | DKMS + PKGBUILD (Arch) | DKMS + instalador |
@@ -45,18 +46,17 @@ salen de leer el código de cada repositorio en esa fecha.
 
 ## Qué conviene adoptar (en este orden, probando cada paso en el adaptador)
 
-1. **Quitar `simple_display_pipe`**: plano, CRTC y encoder propios. Lo hicieron
-   rhgndf y klogg. Es el requisito upstream más claro.
-2. **`drm_fb_xrgb8888_to_rgb888/565()` + intercambio de palabras sobre el
-   búfer completo** (commit "Fix fl2000 specific dword ordering" de rhgndf).
-   Arregla de paso el bug de anchos raros, como 1366 px.
+1. ~~Quitar `simple_display_pipe`~~ **hecho**.
+2. ~~`drm_fb_xrgb8888_to_rgb888/565()` + intercambio de palabras sobre el
+   búfer completo~~ **hecho** (idea del commit "Fix fl2000 specific dword
+   ordering" de rhgndf). Arregla el bug de anchos raros, como 1366 px.
 3. **El arreglo del signo en el ajuste de htotal**: rhgndf lo encontró, y aquí
    está en `docs/pending/`.
 4. **Bridge con `DRM_BRIDGE_ATTACH_NO_CONNECTOR` + `drm_bridge_connector`**.
    El EDID del bus del FL2000 se puede ofrecer por `.edid_read` del bridge.
 5. **Una sola interfaz con `usb_driver_claim_interface()`**, el dispositivo DRM
    colgado de la interfaz USB y `drm_dev_set_dma_dev()`.
-6. **fbdev, suspend/resume y RGB565 por ancho de banda**, como en los demás.
+6. ~~fbdev~~ **hecho**; faltan **suspend/resume y RGB565 por ancho de banda**.
 7. **VGA** (rhgndf, Samuv5): amplía el hardware soportado.
 
 ## Atribución

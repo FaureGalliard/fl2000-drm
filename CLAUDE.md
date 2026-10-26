@@ -24,7 +24,14 @@ repo into a patch series against a drm-misc-next checkout.
 **None of the upstream-preparation commits, nor the earlier IRQ-starvation
 fix (`082a6a4`), have been run on hardware yet.** They compile cleanly (W=1)
 and pass `checkpatch --strict`. Running the field test on the adapter is the
-immediate next task — see "Open issues".
+immediate next task — see "Open issues". The October 2026 API migration
+(simple pipe → atomic objects, shadow plane + format helpers, fbdev, vblank
+timer, atomic bridge callbacks) changes runtime behavior: test commit by
+commit if something regresses (`git log --oneline 9216213..`).
+
+The race is on: klogg, rhgndf (Jie Feng), Samuv5 and vfox888 all have active
+FL2000 drivers (`docs/COMPARISON.md`). The goal of this fork is to follow the
+newest kernel API so it is the one maintainers can take.
 
 **Coordinate with the original author before posting anything.** Artem
 Mygaiev (klogg) resumed work in Oct 2026: he dropped simple-pipe, adapted the
@@ -40,10 +47,15 @@ April 2027), not January.
   (`struct drm_atomic_commit`, bridge `atomic_create_state`, `kzalloc_obj()`)
   and has **no version guards** — upstream does not accept them. Older kernels
   build only through the out-of-tree wrapper: the top-level `Makefile` probes
-  the target headers and force-includes `compat/fl2000_compat.h`, which maps
-  the new names to the old ones. `compat/` is never part of the upstream
-  patches. If a future rename breaks the 7.1 build, add a mapping there, not an
-  `#if` in the driver. Kernels older than 7.1 are not supported.
+  the target headers and, if they use older names, copies the sources to
+  `.compat-build/` and translates them with the sed rules in `compat/*.sed`
+  (the technique of the kernel backports project; see `compat/README`).
+  `compat/` is never part of the upstream patches. If a future rename breaks
+  the 7.1 build, add a sed rule, never an `#if` in the driver. Kernels older
+  than 7.1 are not supported.
+- The upstream series is generated and build-tested against **Linus master**
+  (`/home/user/linux-master` in the cloud workspace), not v7.1: the driver
+  source does not compile on 7.1 untranslated.
 - Re-check against Linus master before each submission. Legacy bridge
   `.enable`/`.disable` were removed in the 7.4 cycle, and the driver stopped
   compiling there until it moved to `atomic_enable`/`atomic_disable`.
@@ -130,11 +142,10 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
    display is active, and `dmesg | grep -i fence` no longer filling with
    amdgpu fence fallback messages. Only then send the RFC
    (`docs/UPSTREAMING.md`).
-2. **Frame pacing.** `drm_crtc_handle_vblank()` is called from every URB
-   completion, so vblank runs at the USB transfer rate rather than the mode's
-   60 Hz, and the stream free-runs at maximum USB rate instead of pacing to the
-   refresh rate. This is a candidate cause if lag or flicker persists after (1).
-   Not yet touched — measure before rewriting the timing.
+2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's
+   refresh rate (it used to follow every URB completion). The stream itself
+   still free-runs, resending the last frame at maximum USB rate; pacing it to
+   the refresh rate would save USB bandwidth and CPU. Measure first.
 3. The IT66121 EDID FIFO path never succeeds on this hardware (harmless: it
    costs ~500 ms of timeouts before the direct path runs, and it is kept because
    other board wirings may need it).
@@ -151,19 +162,25 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **Odd line widths may be scrambled.** The 64-bit half swap in the
-   conversion loops (`xx ^ 4`, `x ^ 2`) restarts at every line, so a line
-   whose byte length is not a multiple of 8 (e.g. 1366 px at RGB888) is
-   probably wrong. Fine at 1920. Test a 1366x768 mode.
-8. **Upstream review items** (expected requests, not started because they
-   change working behavior): reuse the in-tree `ite-it66121` bridge instead of
-   `fl2000_it66121.c`, drop `drm_simple_display_pipe`, `drm_bridge_connector`
-   + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`, a vblank timer instead of per-URB
-   vblank (overlaps with 2), fbdev emulation, real suspend/resume, atomic
-   bridge callbacks, no component framework (`drm_bridge_attach()`), DRM
-   device parented to the USB interface with `drm_dev_set_dma_dev()`, a single
-   interface plus `usb_driver_claim_interface()`, shadow-plane and
-   format-conversion helpers. Listed in `docs/UPSTREAMING.md` section 6.
+7. **Odd line widths** (1366 px) were scrambled by the per-line 64-bit half
+   swap; fixed by the move to the format helpers + whole-buffer swap, but a
+   1366x768 mode has never been checked on hardware.
+8. **Upstream review items still open** (done: simple pipe removed, shadow
+   plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable):
+   - `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`. Blocked for
+     the out-of-tree build: `CONFIG_DRM_BRIDGE_CONNECTOR` is only selected by
+     ARM drivers, so x86 distro kernels may lack `drm_bridge_connector_init()`
+     (klogg vendors the helper sources for that). Check with
+     `zgrep DRM_BRIDGE_CONNECTOR /proc/config.gz` on the test laptop first.
+   - reuse the in-tree `ite-it66121` bridge (asked in the RFC cover letter)
+   - no component framework (`drm_bridge_attach()` from probe), a single
+     interface plus `usb_driver_claim_interface()`, DRM device parented to the
+     USB interface with `drm_dev_set_dma_dev()`. This is the riskiest rework:
+     it replaces the lifetime model behind the crash fixes in "Non-obvious
+     invariants".
+   - real suspend/resume (`drm_mode_config_helper_suspend()`), bridge
+     `mode_set` → atomic hooks, `DRM_BRIDGE_OP_HDMI` infoframes.
+   Listed in `docs/UPSTREAMING.md` section 6.
    `Documentation/process/coding-assistants.rst` asks for an `Assisted-by:`
    tag on AI-assisted kernel patches. `make-upstream-series.sh` adds it only
    when `ASSISTED_BY` is set; the maintainer decides.

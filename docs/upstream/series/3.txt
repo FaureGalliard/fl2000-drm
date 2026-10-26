@@ -7,9 +7,11 @@ filled) cycles between a render list, a transmit list and the in-flight
 list. When no new frame is ready, the previous one is sent again so the
 FL2000 always has data to scan out.
 
-The XRGB8888 framebuffer is converted by the CPU into the 24-bit or
-16-bit packed layout the FL2000 expects. Conversion and frame copies run
-with the buffer taken off the lists so that list_lock, which is also
-taken from URB completion, is never held across multi-megabyte work.
+Frames are converted with the drm_fb_xrgb8888_to_rgb888()/_rgb565()
+helpers; the FL2000 additionally wants the two 32-bit halves of every
+64-bit word swapped, which is done over the whole buffer. Conversion and
+frame copies run with the buffer taken off the lists so that list_lock,
+which is also taken from URB completion, is never held across
+multi-megabyte work.
 
 The stream is wired up to KMS in the next patch.
