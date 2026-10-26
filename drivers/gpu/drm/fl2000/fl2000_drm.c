@@ -6,6 +6,8 @@
 
 #include <linux/math64.h>
 
+#include <drm/clients/drm_client_setup.h>
+#include <drm/drm_fbdev_shmem.h>
 #include <drm/drm_gem_atomic_helper.h>
 
 #include "fl2000.h"
@@ -121,6 +123,7 @@ static struct drm_driver fl2000_drm_driver = {
 	 * need to be physically contiguous.
 	 */
 	DRM_GEM_SHMEM_DRIVER_OPS,
+	DRM_FBDEV_SHMEM_DRIVER_OPS,
 
 	.name = DRM_DRIVER_NAME,
 	.desc = DRM_DRIVER_DESC,
@@ -659,6 +662,12 @@ int fl2000_drm_bind(struct device *master)
 
 	fl2000_reset(usb_dev);
 	fl2000_usb_magic(usb_dev);
+
+	/*
+	 * fbdev emulation, so the console can use the display. Last, because it
+	 * may set a mode right away and the reset above would undo it.
+	 */
+	drm_client_setup(drm, NULL);
 
 	return 0;
 
