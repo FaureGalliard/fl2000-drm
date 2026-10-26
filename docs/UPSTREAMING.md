@@ -82,8 +82,10 @@ make -j$(nproc) M=drivers/gpu/drm/fl2000 modules
 
 - `sparse` no se pudo ejecutar en la preparación: instalarlo
   (`pacman -S sparse`) y confirmar que `C=1` no da avisos.
-- Compilar también para 32 bits si es posible (`make ARCH=i386 ...`); los
-  revisores y el bot de 0-day lo harán de todas formas.
+- La preparación ya compiló el driver dentro del árbol v7.1 para x86_64 e
+  i386 con `W=1` sin avisos. Repetirlo sobre drm-misc-next (y si se puede,
+  `ARCH=arm64` con un cross-compiler): el bot 0-day compila muchas
+  arquitecturas y responde a la lista si algo falla.
 - Leer los parches enteros (`outgoing/*.patch`) antes de enviarlos.
 
 ## 4. Enviar

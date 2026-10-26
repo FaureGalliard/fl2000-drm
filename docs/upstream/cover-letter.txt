@@ -8,10 +8,10 @@ brands as cheap USB 3.0 to VGA/HDMI dongles; the HDMI variants pair the
 FL2000 with an ITE IT66121 HDMI transmitter on the FL2000's I2C bus.
 Today these adapters only work on Linux with out-of-tree drivers.
 
-The driver started as Artem Mygaiev's out-of-tree fl2000_drm driver. I
-ported it to current kernels, fixed the problems found on real hardware
-(EDID, bridge lifetime across USB resets, crashes on disconnect) and cleaned
-it up for submission.
+The driver started as Artem Mygaiev's out-of-tree fl2000_drm driver.
+I ported it to current kernels, fixed the problems found on real
+hardware (EDID, bridge lifetime across USB resets, crashes on
+disconnect) and cleaned it up for submission.
 
 It is posted as an RFC because there are design points I would like
 feedback on before doing the larger reworks:
@@ -46,7 +46,9 @@ feedback on before doing the larger reworks:
 
 Other known limitations: no fbdev emulation yet, no suspend/resume
 handling, damage clips are not used (every update converts the whole
-frame), and VGA-only FL2000 adapters are untested.
+frame), the USB bandwidth check that should switch to RGB565 on slow
+links is not functional yet (RGB888 is always used), and VGA-only
+FL2000 adapters are untested.
 
 Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
 to HDMI adapter and a 1920x1080 monitor: EDID, mode setting and the

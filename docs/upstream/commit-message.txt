@@ -12,9 +12,8 @@ The driver consists of:
 - a regmap for the FL2000 registers, accessed with vendor control
   transfers, and an I2C adapter on top of the FL2000 I2C engine
 - a DRM device with GEM SHMEM buffers. Frames are converted from
-  XRGB8888 to RGB888 or RGB565, depending on the USB bandwidth the mode
-  needs, and sent as one bulk transfer per frame; the previous frame is
-  resent when there is no new one
+  XRGB8888 to RGB888 by the CPU and sent as one bulk transfer per
+  frame; the previous frame is resent when there is no new one
 - PLL and timing programming for the requested mode
 - an IT66121 bridge instantiated on the FL2000 I2C bus. EDID is read
   through the IT66121 DDC engine and, where the monitor's DDC lines are
