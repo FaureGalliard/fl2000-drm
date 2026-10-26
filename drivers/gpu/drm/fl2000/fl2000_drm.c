@@ -9,6 +9,7 @@
 #include <drm/clients/drm_client_setup.h>
 #include <drm/drm_fbdev_shmem.h>
 #include <drm/drm_gem_atomic_helper.h>
+#include <drm/drm_vblank_helper.h>
 
 #include "fl2000.h"
 
@@ -440,7 +441,7 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 
 	fl2000_stream_enable(drm_if->stream);
 
-	drm_crtc_vblank_on(crtc);
+	drm_crtc_vblank_atomic_enable(crtc, state);
 }
 
 static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
@@ -449,48 +450,17 @@ static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_
 
 	fl2000_stream_disable(drm_if->stream);
 
-	drm_crtc_vblank_off(crtc);
-}
-
-static void fl2000_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_atomic_commit *state)
-{
-	struct drm_device *drm = crtc->dev;
-	struct drm_pending_vblank_event *event = crtc->state->event;
-
-	if (!event)
-		return;
-
-	crtc->state->event = NULL;
-
-	spin_lock_irq(&drm->event_lock);
-	if (crtc->state->active && drm_crtc_vblank_get(crtc) == 0)
-		drm_crtc_arm_vblank_event(crtc, event);
-	else
-		drm_crtc_send_vblank_event(crtc, event);
-	spin_unlock_irq(&drm->event_lock);
+	drm_crtc_vblank_atomic_disable(crtc, state);
 }
 
 static const struct drm_crtc_helper_funcs fl2000_crtc_helper_funcs = {
 	.mode_valid = fl2000_crtc_mode_valid,
 	.atomic_check = fl2000_crtc_atomic_check,
 	.mode_set_nofb = fl2000_crtc_mode_set_nofb,
-	.atomic_flush = fl2000_crtc_atomic_flush,
+	.atomic_flush = drm_crtc_vblank_atomic_flush,
 	.atomic_enable = fl2000_crtc_atomic_enable,
 	.atomic_disable = fl2000_crtc_atomic_disable,
 };
-
-/*
- * Vblank is signalled from the URB completion handler, so there is nothing
- * to switch on or off here.
- */
-static int fl2000_crtc_enable_vblank(struct drm_crtc *crtc)
-{
-	return 0;
-}
-
-static void fl2000_crtc_disable_vblank(struct drm_crtc *crtc)
-{
-}
 
 static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	.atomic_create_state = drm_atomic_helper_crtc_create_state,
@@ -499,8 +469,11 @@ static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	.page_flip = drm_atomic_helper_page_flip,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
-	.enable_vblank = fl2000_crtc_enable_vblank,
-	.disable_vblank = fl2000_crtc_disable_vblank,
+	/*
+	 * The FL2000 has no vblank interrupt: vblank events come from a timer
+	 * running at the mode's refresh rate.
+	 */
+	DRM_CRTC_VBLANK_TIMER_FUNCS,
 };
 
 /*
@@ -620,7 +593,7 @@ int fl2000_drm_bind(struct device *master)
 	drm_if->encoder.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 
 	/* Start streaming interface */
-	drm_if->stream = fl2000_stream_create(usb_dev, &drm_if->crtc);
+	drm_if->stream = fl2000_stream_create(usb_dev);
 	if (IS_ERR(drm_if->stream)) {
 		ret = PTR_ERR(drm_if->stream);
 		drm_err(drm, "Cannot create stream (%d)\n", ret);

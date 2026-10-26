@@ -108,7 +108,7 @@ struct fl2000_pll {
 
 /* Streaming transfer task */
 struct fl2000_stream;
-struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct drm_crtc *crtc);
+struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev);
 void fl2000_stream_destroy(struct usb_device *usb_dev);
 
 /* Streaming interface */

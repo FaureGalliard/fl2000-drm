@@ -39,7 +39,6 @@ struct fl2000_stream_buf {
 
 struct fl2000_stream {
 	struct usb_device *usb_dev;
-	struct drm_crtc *crtc;
 	/* Each buffer journey: render->transmit->wait->... */
 	struct list_head render_list;
 	struct list_head transmit_list;
@@ -167,8 +166,6 @@ static void fl2000_stream_data_completion(struct urb *urb)
 		spin_lock_irqsave(&stream->list_lock, flags);
 		list_move_tail(&cur_sb->list, &stream->render_list);
 		spin_unlock_irqrestore(&stream->list_lock, flags);
-
-		drm_crtc_handle_vblank(stream->crtc);
 
 		/* Return the credit and kick the transmit work */
 		atomic_inc(&stream->credits);
@@ -401,7 +398,6 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
 /**
  * fl2000_stream_create() - streaming processing context creation
  * @usb_dev: FL2000 USB device
- * @crtc: CRTC that receives the vblank events of this stream
  *
  * Called on DRM master bind. It shall not initiate any USB transfers: buffers
  * and URBs are allocated later, once the mode (and thus the frame size) is
@@ -409,7 +405,7 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
  *
  * Return: stream context, or an ERR_PTR() on failure
  */
-struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct drm_crtc *crtc)
+struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 {
 	int ret;
 	struct fl2000_stream *stream;
@@ -434,7 +430,6 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct dr
 	atomic_set(&stream->credits, 0);
 	init_waitqueue_head(&stream->credits_wq);
 	stream->usb_dev = usb_dev;
-	stream->crtc = crtc;
 
 	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
 	if (!stream->work_queue) {
