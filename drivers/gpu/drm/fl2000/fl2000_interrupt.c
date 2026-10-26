@@ -49,36 +49,34 @@ static void fl2000_intr_completion(struct urb *urb)
 
 	ret = fl2000_urb_status(usb_dev, urb->status, urb->pipe);
 	if (ret) {
-		dev_err(&usb_dev->dev, "Stopping interrupts");
+		dev_err(&usb_dev->dev, "Stopping interrupts\n");
 		return;
 	}
 
-	/* This possibly involves reading I2C registers, etc. so better to schedule a work queue */
+	/* Processing reads registers over USB, which sleeps: defer it to a work item */
 	queue_work(intr->work_queue, &intr->work);
 
-	/* For interrupt URBs, as part of successful URB submission urb->interval is modified to
-	 * reflect the actual transfer period used, so we need to restore it
+	/*
+	 * For interrupt URBs, as part of successful URB submission urb->interval is modified to
+	 * reflect the actual transfer period used, so we need to restore it.
 	 */
 	urb->interval = intr->poll_interval;
 	urb->start_frame = -1;
 
 	/* Restart urb */
 	ret = fl2000_submit_urb(urb);
-	if (ret) {
-		dev_err(&usb_dev->dev, "URB submission failed (%d)", ret);
-		/* TODO: Signal fault to system and start shutdown of usb_dev */
-	}
+	if (ret)
+		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
 }
 
 /**
  * fl2000_intr_create() - interrupt processing context creation
- * @interface:	USB interrupt transfers interface
+ * @usb_dev: FL2000 USB device
+ * @drm: DRM device that receives the hotplug events
  *
- * This function is called only on Interrupt interface probe
+ * Called on DRM master bind. Starts polling the interrupt endpoint.
  *
- * Function initiates USB Interrupt transfers
- *
- * Return: Operation result
+ * Return: interrupt context, or an ERR_PTR() on failure
  */
 struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_device *drm)
 {
@@ -87,20 +85,19 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	struct usb_endpoint_descriptor *desc;
 	struct usb_interface *interface = usb_ifnum_to_if(usb_dev, FL2000_USBIF_INTERRUPT);
 
-	/* There's only one altsetting (#0) and one endpoint (#3) in the interrupt interface (#2)
-	 * but lets try and "find" it anyway
+	/*
+	 * There's only one altsetting (#0) and one endpoint (#3) in the interrupt interface (#2)
+	 * but let's try and "find" it anyway.
 	 */
 	ret = usb_find_int_in_endpoint(interface->cur_altsetting, &desc);
 	if (ret) {
-		dev_err(&usb_dev->dev, "Cannot find interrupt endpoint");
+		dev_err(&usb_dev->dev, "Cannot find interrupt endpoint\n");
 		return ERR_PTR(ret);
 	}
 
 	intr = devres_alloc(&fl2000_intr_release, sizeof(*intr), GFP_KERNEL);
-	if (!intr) {
-		dev_err(&usb_dev->dev, "Cannot allocate interrupt private structure");
+	if (!intr)
 		return ERR_PTR(-ENOMEM);
-	}
 	devres_add(&usb_dev->dev, intr);
 
 	intr->poll_interval = desc->bInterval;
@@ -108,23 +105,20 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	intr->drm = drm;
 	INIT_WORK(&intr->work, &fl2000_intr_work);
 
-	intr->urb = usb_alloc_urb(0, GFP_ATOMIC);
+	intr->urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!intr->urb) {
-		dev_err(&usb_dev->dev, "Allocate interrupt URB failed");
 		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
 		return ERR_PTR(-ENOMEM);
 	}
 
 	intr->buf = usb_alloc_coherent(usb_dev, INTR_BUFSIZE, GFP_KERNEL, &intr->transfer_dma);
 	if (!intr->buf) {
-		dev_err(&usb_dev->dev, "Cannot allocate interrupt data");
 		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
 		return ERR_PTR(-ENOMEM);
 	}
 
-	intr->work_queue = create_workqueue("fl2000_interrupt");
+	intr->work_queue = alloc_ordered_workqueue("fl2000_interrupt", 0);
 	if (!intr->work_queue) {
-		dev_err(&usb_dev->dev, "Create interrupt workqueue failed");
 		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
 		return ERR_PTR(-ENOMEM);
 	}
@@ -133,12 +127,12 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	usb_fill_int_urb(intr->urb, usb_dev, usb_rcvintpipe(usb_dev, 3), intr->buf, INTR_BUFSIZE,
 			 fl2000_intr_completion, intr, intr->poll_interval);
 	intr->urb->transfer_dma = intr->transfer_dma;
-	intr->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP; /* use urb->transfer_dma */
+	intr->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
 	/* Start checking for interrupts */
 	ret = usb_submit_urb(intr->urb, GFP_KERNEL);
 	if (ret) {
-		dev_err(&usb_dev->dev, "URB submission failed");
+		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
 		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
 		return ERR_PTR(ret);
 	}

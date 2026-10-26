@@ -4,53 +4,33 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
-#ifndef __FL2000_DRM_H__
-#define __FL2000_DRM_H__
+#ifndef FL2000_H
+#define FL2000_H
 
-#include <linux/version.h>
-#include <linux/module.h>
-#include <linux/types.h>
-#include <linux/kernel.h>
-#include <linux/printk.h>
-#include <linux/init.h>
-#include <linux/usb.h>
-#include <linux/i2c.h>
 #include <linux/component.h>
-#include <linux/regmap.h>
-#include <linux/vmalloc.h>
-#include <linux/dma-buf.h>
-#include <linux/dma-mapping.h>
-#include <linux/time.h>
 #include <linux/device.h>
+#include <linux/i2c.h>
+#include <linux/module.h>
+#include <linux/regmap.h>
+#include <linux/types.h>
+#include <linux/usb.h>
 
-#include <linux/iosys-map.h>
-
+#include <drm/drm_atomic_helper.h>
+#include <drm/drm_bridge.h>
+#include <drm/drm_crtc.h>
+#include <drm/drm_damage_helper.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
-#include <drm/drm_gem.h>
-#include <drm/drm_gem_shmem_helper.h>
-#include <drm/drm_gem_framebuffer_helper.h>
-#include <drm/drm_fb_helper.h>
-#include <drm/drm_framebuffer.h>
 #include <drm/drm_fourcc.h>
-#include <drm/drm_atomic_helper.h>
-#include <drm/drm_atomic_state_helper.h>
-#include <drm/drm_bridge.h>
-#include <drm/drm_connector.h>
-#include <drm/drm_crtc.h>
-#include <drm/drm_encoder.h>
-#include <drm/drm_plane.h>
+#include <drm/drm_framebuffer.h>
+#include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_gem_shmem_helper.h>
+#include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/drm_vblank.h>
-#include <drm/drm_client.h>
-#include <drm/drm_modeset_helper.h>
 #include <drm/drm_simple_kms_helper.h>
 #include <drm/drm_vblank.h>
-#include <drm/drm_damage_helper.h>
 
 #include "fl2000_registers.h"
-
-#define UNUSED(x) ((void)(x))
 
 /* Known USB interfaces of FL2000 */
 enum fl2000_interface {
@@ -107,19 +87,16 @@ static inline int fl2000_urb_status(struct usb_device *usb_dev, int status, int 
 	int ret = status;
 
 	switch (status) {
-	/* Success */
 	case 0:
 		break;
-	/* Stalled endpoint */
 	case -EPIPE:
+		/* Stalled endpoint */
 		ret = usb_clear_halt(usb_dev, pipe);
 		break;
 	case -ECONNRESET:
-		fallthrough;
 	case -ENOENT:
-		fallthrough;
 	case -ESHUTDOWN:
-		/* Not an error */
+		/* URB was unlinked or the device is going away: not an error */
 		break;
 	default:
 		dev_err(&usb_dev->dev, "Nonzero urb status, %d\n", status);
@@ -147,8 +124,8 @@ struct fl2000_pll {
 	u32 function;
 };
 
-/* Timeout in us for I2C read/write operations */
-#define I2C_RDWR_INTERVAL (200)
+/* Polling interval and timeout in us for I2C read/write operations */
+#define I2C_RDWR_INTERVAL 200
 #define I2C_RDWR_TIMEOUT  (256 * 1000)
 
 /* Streaming transfer task */
@@ -190,4 +167,4 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 int fl2000_drm_bind(struct device *master);
 void fl2000_drm_unbind(struct device *master);
 
-#endif /* __FL2000_DRM_H__ */
+#endif /* FL2000_H */

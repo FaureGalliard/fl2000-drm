@@ -57,7 +57,7 @@ fi
 step "esperando tarjeta DRM del fl2000 (max 90s)"
 FOUND=0
 for i in $(seq 1 45); do
-	if modetest -M fl2000_drm -c >/dev/null 2>&1; then
+	if modetest -M fl2000 -c >/dev/null 2>&1; then
 		FOUND=1
 		echo "tarjeta DRM presente (tras $((i * 2))s)"
 		break
@@ -85,7 +85,7 @@ ls /sys/class/drm/
 for f in /sys/class/drm/card*-*/status; do echo "$f: $(cat "$f")"; done
 
 step "conectores y modos (modetest -c)"
-modetest -M fl2000_drm -c 2>&1 | head -40
+modetest -M fl2000 -c 2>&1 | head -40
 
 step "EDID decodificado (si hay edid-decode)"
 for e in /sys/class/drm/card*-HDMI-A-2/edid; do
@@ -101,14 +101,14 @@ for e in /sys/class/drm/card*-HDMI-A-2/edid; do
 done
 
 if [ "$FOUND" = 1 ]; then
-	CONN=$(modetest -M fl2000_drm -c 2>/dev/null | awk '/\<connected\>/{print $1; exit}')
+	CONN=$(modetest -M fl2000 -c 2>/dev/null | awk '/\<connected\>/{print $1; exit}')
 	# Primer modo de la lista (el preferido del monitor), sin fijar refresh:
 	# p.ej. el LG lista 1920x1080@59.94 y "1920x1080-60" no haria match
-	MODE=$(modetest -M fl2000_drm -c 2>/dev/null | awk '/#0 /{print $2; exit}')
+	MODE=$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')
 	if [ -n "${CONN:-}" ] && [ -n "${MODE:-}" ]; then
 		step "PRUEBA DE MODESET: patron de colores 15s en conector $CONN modo $MODE"
 		echo ">>> MIRA EL MONITOR LG AHORA - deberian verse barras de colores <<<"
-		sleep 12 | modetest -M fl2000_drm -s "$CONN:$MODE" 2>&1
+		sleep 12 | modetest -M fl2000 -s "$CONN:$MODE" 2>&1
 		echo "(anota si se vio el patron y compartelo junto con este log)"
 	else
 		step "PRUEBA DE MODESET omitida: sin conector conectado o sin modos"

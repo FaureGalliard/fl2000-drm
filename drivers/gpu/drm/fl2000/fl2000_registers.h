@@ -5,15 +5,10 @@
  * (C) Copyright 2019, Artem Mygaiev
  */
 
-#ifndef __FL2000_REGISTERS_H__
-#define __FL2000_REGISTERS_H__
+#ifndef FL2000_REGISTERS_H
+#define FL2000_REGISTERS_H
 
 #include <linux/types.h>
-
-#define regmap_reg_default(addr, val)   \
-	{                               \
-		.reg = addr, .def = val \
-	}
 
 /* #### USB Control Registers Bank #### */
 /* Some unknown & undocumented FL2000 USB settings */
@@ -394,15 +389,13 @@ union fl2000_vga_ctrl_reg_3 {
 
 /* undefined				(FL2000_VGA_CONTROL_OFFSET + 0x8C) */
 
-/* List of registers that shall not be read automatically (e.g. for cache update due to presence of
- * self-clear bits
+/*
+ * List of registers that shall not be read automatically (e.g. for cache update) due to presence
+ * of self-clear bits
  */
 static inline bool FL2000_REG_PRECIOUS(u32 reg)
 {
-	if (reg == FL2000_VGA_STATUS_REG)
-		return true;
-	else
-		return false;
+	return reg == FL2000_VGA_STATUS_REG;
 }
 
 /* List of volatile registers that shall not be cached */
@@ -430,4 +423,4 @@ static inline bool FL2000_REG_VOLATILE(u32 reg)
 	}
 }
 
-#endif /* __FL2000_REGISTERS_H__ */
+#endif /* FL2000_REGISTERS_H */

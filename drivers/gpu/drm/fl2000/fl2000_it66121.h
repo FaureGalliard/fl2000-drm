@@ -3,34 +3,13 @@
  * (C) Copyright 2019, Artem Mygaiev
  */
 
-#ifndef __IT66121_H__
-#define __IT66121_H__
+#ifndef FL2000_IT66121_H
+#define FL2000_IT66121_H
 
-#include <linux/version.h>
-#include <linux/device.h>
-#include <linux/module.h>
-#include <linux/hdmi.h>
-#include <linux/i2c.h>
-#include <linux/component.h>
-#include <linux/regmap.h>
-#include <drm/drm_atomic.h>
-#include <drm/drm_bridge.h>
-#include <drm/drm_print.h>
-#include <drm/drm_edid.h>
-#include <drm/drm_atomic_helper.h>
-#include <drm/drm_probe_helper.h>
-#include <drm/drm_connector.h>
-#include <drm/drm_encoder.h>
-#include <drm/drm_simple_kms_helper.h>
-
-#include "fl2000_it66121_regs.h"
-
-#define UNUSED(x) ((void)(x))
-
-/* HW defect leading to losing 3 first bytes during EDID read operation */
-#define EDID_LOSS_LEN 3
+struct i2c_adapter;
+struct i2c_client;
 
 struct i2c_client *it66121_create(struct i2c_adapter *adapter);
 void it66121_destroy(struct i2c_client *client);
 
-#endif /* __IT66121_H__ */
+#endif /* FL2000_IT66121_H */

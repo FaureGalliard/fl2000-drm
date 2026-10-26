@@ -4,18 +4,23 @@
  * (C) Copyright 2018-2019, Artem Mygaiev
  */
 
+#include <linux/delay.h>
+#include <linux/hdmi.h>
 #include <linux/unaligned.h>
 
-#include "fl2000_it66121.h"
+#include <drm/drm_edid.h>
+
 #include "fl2000.h"
+#include "fl2000_it66121.h"
+#include "fl2000_it66121_regs.h"
+
+/* HW defect leading to losing 3 first bytes during EDID read operation */
+#define EDID_LOSS_LEN 3
 
 #define VENDOR_ID      0x4954
 #define DEVICE_ID      0x0612
 #define REVISION_MASK  0xF000
 #define REVISION_SHIFT 12
-
-#define OFFSET_BITS 8
-#define VALUE_BITS  8
 
 #define IRQ_POLL_INTRVL 100
 
@@ -35,14 +40,7 @@ struct it66121_priv {
 
 	struct regmap_field *irq_pending;
 	struct regmap_field *hpd;
-	struct regmap_field *ddc_done;
-	struct regmap_field *ddc_error;
 	struct regmap_field *clr_irq;
-
-	struct regmap_field *swap_pack;
-	struct regmap_field *swap_ml;
-	struct regmap_field *swap_yc;
-	struct regmap_field *swap_rb;
 
 	struct hdmi_avi_infoframe hdmi_avi_infoframe;
 
@@ -51,8 +49,9 @@ struct it66121_priv {
 };
 
 static const struct regmap_range_cfg it66121_regmap_banks[] = {
-	/* Do not put common registers to any range, this will lead to skipping "bank" configuration
-	 * when accessing those at addresses 0x00-0x2F
+	/*
+	 * Do not put common registers to any range, this will lead to skipping "bank" configuration
+	 * when accessing those at addresses 0x00-0x2F.
 	 */
 	{
 		.name = "Banks",
@@ -68,7 +67,6 @@ static const struct regmap_range_cfg it66121_regmap_banks[] = {
 
 static bool it66121_reg_volatile(struct device *dev, unsigned int reg)
 {
-	UNUSED(dev);
 	return IT66121_REG_VOLATILE(reg);
 }
 
@@ -92,8 +90,9 @@ static const struct regmap_config it66121_regmap_config = {
 	.use_single_write = true,
 };
 
-/* Poll sparsely: every status read is a transaction on the shared bus that
- * competes with the DDC engine's own transfer
+/*
+ * Poll sparsely: every status read is a transaction on the shared bus that
+ * competes with the DDC engine's own transfer.
  */
 #define EDID_SLEEP   5000
 #define EDID_TIMEOUT 500000
@@ -115,36 +114,29 @@ enum it66121_ddc_cmd {
 	DDC_CMD_ABORT = 0xF,
 };
 
-/* XXX: mode, adjusted_mode can be used here for transformation configuration */
 static int it66121_configure_input(struct it66121_priv *priv)
 {
 	int ret;
 
-	/* XXX: This configures bridge IC connection to encoder IC. In our case this is the
-	 * interface between IT66121 and FL2000. Of course it is static so shall be read from
-	 * device's EEPROM (not sure if there is EEPROM on our HW), or at least to be set by
-	 * driver's parameters. For now, let's keep it simple - hardcode it:
+	/*
+	 * This configures the bridge IC connection to the encoder IC, i.e. the
+	 * interface between IT66121 and FL2000. It is fixed by the board design,
+	 * so it is hardcoded:
 	 *   - input mode RGB
 	 *   - IO latch clock = TXCLK
 	 *   - CCIR656 disabled
 	 *   - embedded sync disabled
 	 *   - DDR mode disabled
 	 *   - 1 cycle input PCLK delay
-	 * NOTE: some flexible encoders may support non-static mode on the bus, for those we may
-	 * need to also use modeset parameters
 	 */
 	ret = regmap_write(priv->regmap, IT66121_INPUT_MODE,
 			   IT66121_INPUT_MODE_RGB | IT66121_INPUT_PCLKDELAY1);
 	if (ret)
 		return ret;
 
-	/* XXX: Also we can change some parameters of IT66121_INPUT_IO_CONTROL related to TX FIFO
-	 * resetting, 10/12bit YCbCr422 sequential IO mode
-	 */
-
-	/* XXX: This configures transformation needed in order to properly convert input signal to
-	 * output. For now we hardcode "bypassing". In case when conversion is needed we have to
-	 * also to set Color Space Conversion Matrix and RGB or YUV blank levels
+	/*
+	 * No color space conversion: the input is RGB and so is the output, so the
+	 * conversion matrix and blank levels are left untouched.
 	 */
 	ret = regmap_write(priv->regmap, IT66121_INPUT_COLOR_CONV, IT66121_INPUT_NO_CONV);
 	if (ret)
@@ -161,7 +153,7 @@ static int it66121_configure_afe(struct it66121_priv *priv, int clock_khz)
 	if (ret)
 		return ret;
 
-	/* TODO: Rewrite with proper bit names */
+	/* Values from the vendor reference driver, the bits are undocumented */
 	if (clock_khz > 80000) {
 		ret = regmap_write_bits(priv->regmap, IT66121_AFE_XP_CONTROL, 0x90, 0x80);
 		if (ret)
@@ -202,16 +194,17 @@ static int it66121_wait_ddc_ready(struct it66121_priv *priv)
 	int ret;
 	unsigned int val;
 
-	/* Wait for completion only. On this hardware the FL2000 I2C master and
+	/*
+	 * Wait for completion only. On this hardware the FL2000 I2C master and
 	 * the IT66121 DDC master share the physical bus, so 'wait bus' and
 	 * 'arbitration lose' flags are live/latched transients of the engine
 	 * retrying on a contended bus, not terminal errors - the only reliable
-	 * terminal signal is TX_DONE (or the timeout)
+	 * terminal signal is TX_DONE (or the timeout).
 	 */
 	ret = regmap_read_poll_timeout(priv->regmap, IT66121_DDC_STATUS, val,
 				       val & DDC_STATUS_TX_DONE, EDID_SLEEP, EDID_TIMEOUT);
 	if (ret) {
-		dev_err(&priv->client->dev, "DDC not done (%d), status 0x%02X", ret, val);
+		dev_err(&priv->client->dev, "DDC not done (%d), status 0x%02X\n", ret, val);
 		return ret;
 	}
 
@@ -234,11 +227,12 @@ static int it66121_abort_ddc_ops(struct it66121_priv *priv)
 	int ret;
 	unsigned int swreset, cpdesire;
 
-	/* The HDCP engine shares the DDC master and holds the bus after chip
+	/*
+	 * The HDCP engine shares the DDC master and holds the bus after chip
 	 * reset (DDC status reports 'wait bus' + 'arbitration lose', 0x1A).
-	 * Follow the ITE reference sequence, as the in-tree ite-it66121 driver
-	 * does: clear HDCP CP_DESIRE, reset the HDCP engine and re-select the
-	 * host as DDC master before issuing the abort command
+	 * Follow the ITE reference sequence, as the ite-it66121 driver does:
+	 * clear HDCP CP_DESIRE, reset the HDCP engine and re-select the host as
+	 * DDC master before issuing the abort command.
 	 */
 	ret = regmap_read(priv->regmap, IT66121_SW_RST, &swreset);
 	if (ret)
@@ -262,9 +256,7 @@ static int it66121_abort_ddc_ops(struct it66121_priv *priv)
 	if (ret)
 		return ret;
 
-	/* From original driver: According to 2009/01/15 modification by Jau-Chih.Tseng@ite.com.tw
-	 * do abort DDC twice
-	 */
+	/* The ITE reference driver issues the abort command twice */
 	for (int i = 0; i < 2; i++) {
 		ret = regmap_write(priv->regmap, IT66121_DDC_COMMAND, DDC_CMD_ABORT);
 		if (ret)
@@ -287,7 +279,7 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
 
 	ret = regmap_field_read(priv->hpd, &val);
 	if (ret) {
-		dev_err(dev, "Cannot get monitor status (%d)", ret);
+		dev_err(dev, "Cannot get monitor status (%d)\n", ret);
 		priv->conn_status = connector_status_unknown;
 	} else {
 		priv->conn_status = val ? connector_status_connected :
@@ -295,7 +287,6 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
 	}
 }
 
-/* TODO: Add protection for I2C register / EDID / SPI access, e.g. mutex*/
 static void it66121_intr_work(struct work_struct *work_item)
 {
 	int ret;
@@ -308,34 +299,32 @@ static void it66121_intr_work(struct work_struct *work_item)
 
 	ret = regmap_field_read(priv->irq_pending, &val);
 	if (ret) {
-		/* TODO: Process error? */
-		dev_err(dev, "Cannot read interrupt status (%d)", ret);
+		dev_err(dev, "Cannot read interrupt status (%d)\n", ret);
 		return;
 	}
 
-	/* XXX: There are at least 5 registers that can source interrupt:
+	/*
+	 * There are at least 5 registers that can source interrupt:
 	 *  - 0x06 (IT66121_INT_STATUS_1)
 	 *  - 0x07 (IT66121_INT_STATUS_2)
 	 *  - 0x08 (IT66121_INT_STATUS_3)
 	 *  - 0xEE (IT66121_EXT_INT_STATUS_1)
 	 *  - 0xF0 (IT66121_EXT_INT_STATUS_2)
-	 * For now we process only DDC events of the IT66121_INT_STATUS_1 which implies proper masks
-	 * configuration
+	 * Only the DDC and HPD events of IT66121_INT_STATUS_1 are processed.
 	 */
 	if (val) {
-		union it666121_int_status_1_reg status_1;
+		union it66121_int_status_1_reg status_1;
 
 		ret = regmap_read(priv->regmap, IT66121_INT_STATUS_1, &status_1.val);
 		if (ret) {
-			/* TODO: Process error? */
-			dev_err(dev, "Cannot read IT66121_INT_STATUS_1 (%d)", ret);
+			dev_err(dev, "Cannot read IT66121_INT_STATUS_1 (%d)\n", ret);
 			return;
 		}
 
 		regmap_field_write(priv->clr_irq, 1);
 
 		if (status_1.ddc_fifo_err || status_1.ddc_bus_hang || status_1.ddc_noack) {
-			dev_dbg(dev, "DDC recovery: fifo_err=%u bus_hang=%u noack=%u",
+			dev_dbg(dev, "DDC recovery: fifo_err=%u bus_hang=%u noack=%u\n",
 				status_1.ddc_fifo_err, status_1.ddc_bus_hang,
 				status_1.ddc_noack);
 
@@ -350,10 +339,10 @@ static void it66121_intr_work(struct work_struct *work_item)
 		if (status_1.hpd_plug) {
 			it66121_is_hpd_detect(priv);
 			event = true;
-			dev_info(dev, "Monitor HPD: %s",
-				 priv->conn_status == connector_status_connected ? "connected" :
-				 priv->conn_status == connector_status_disconnected ?
-					 "disconnected" : "unknown");
+			dev_dbg(dev, "Monitor HPD: %s\n",
+				priv->conn_status == connector_status_connected ? "connected" :
+				priv->conn_status == connector_status_disconnected ?
+					"disconnected" : "unknown");
 			if (priv->conn_status == connector_status_disconnected) {
 				drm_edid_free(priv->drm_edid);
 				priv->drm_edid = NULL;
@@ -367,9 +356,9 @@ static void it66121_intr_work(struct work_struct *work_item)
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 }
 
-/* EDID is read through the IT66121 DDC master (EDID FIFO command): the
- * monitor's DDC lines are wired to the IT66121, not to the FL2000 I2C bus, and
- * the FL2000 bus quirks only allow 1-byte reads anyway
+/*
+ * EDID read through the IT66121 DDC master (EDID FIFO command), for boards
+ * where the monitor's DDC lines are wired to the IT66121.
  */
 static int it66121_do_get_edid_block(struct it66121_priv *priv, u8 *buf, unsigned int block,
 				     size_t len)
@@ -386,8 +375,9 @@ static int it66121_do_get_edid_block(struct it66121_priv *priv, u8 *buf, unsigne
 	if (ret)
 		return ret;
 
-	/* Statically fill first 3 bytes (due to EDID reading HW bug they are
-	 * lost, but they are constant in any valid EDID header)
+	/*
+	 * Statically fill first 3 bytes (due to EDID reading HW bug they are
+	 * lost, but they are constant in any valid EDID header).
 	 */
 	while (offset < EDID_LOSS_LEN && remain > 0) {
 		*(buf++) = header[offset];
@@ -400,7 +390,7 @@ static int it66121_do_get_edid_block(struct it66121_priv *priv, u8 *buf, unsigne
 		size_t size = remain + EDID_LOSS_LEN;
 
 		/* ... and check size fits FIFO */
-		size = size > EDID_FIFO_SIZE ? EDID_FIFO_SIZE : size;
+		size = min_t(size_t, size, EDID_FIFO_SIZE);
 
 		ret = it66121_clear_ddc_fifo(priv);
 		if (ret)
@@ -461,16 +451,17 @@ static int it66121_get_edid_block(void *context, u8 *buf, unsigned int block, si
 	mutex_unlock(&priv->ddc_lock);
 
 	if (ret)
-		dev_err(&priv->client->dev, "EDID block %u read failed (%d)", block, ret);
+		dev_dbg(&priv->client->dev, "EDID block %u read failed (%d)\n", block, ret);
 
 	return ret;
 }
 
-/* Fallback EDID path: on Fresco reference designs the monitor's DDC lines hang
+/*
+ * Fallback EDID path: on Fresco reference designs the monitor's DDC lines hang
  * directly off the FL2000 I2C bus, and the vendor driver reads EDID at address
  * 0x50 with the FL2000's own dword I2C engine, bypassing the IT66121 DDC
  * master entirely. The engine reads 4 bytes per operation with an 8-bit
- * offset, which covers EDID blocks 0 and 1
+ * offset, which covers EDID blocks 0 and 1.
  */
 static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int block, size_t len)
 {
@@ -488,7 +479,7 @@ static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int bl
 		ret = fl2000_i2c_dword(usb_dev, true, EDID_DDC_ADDR >> 1, start + i, &data);
 		if (ret) {
 			dev_err(&priv->client->dev,
-				"Direct EDID read failed at offset %u (%d)", start + i, ret);
+				"Direct EDID read failed at offset %u (%d)\n", start + i, ret);
 			return ret;
 		}
 
@@ -505,44 +496,33 @@ static int it66121_connector_get_modes(struct drm_connector *connector)
 	if (!priv->drm_edid) {
 		priv->drm_edid = drm_edid_read_custom(connector, it66121_get_edid_block, priv);
 
-		/* Board wirings differ: try the direct FL2000-bus DDC read if
-		 * the IT66121 EDID FIFO path did not work
+		/*
+		 * Board wirings differ: try the direct FL2000-bus DDC read if
+		 * the IT66121 EDID FIFO path did not work.
 		 */
 		if (!priv->drm_edid) {
-			dev_info(&priv->client->dev,
-				 "EDID FIFO read failed, trying direct DDC read");
-			priv->drm_edid = drm_edid_read_custom(
-				connector, it66121_get_edid_block_direct, priv);
+			dev_dbg(&priv->client->dev, "EDID FIFO read failed, trying direct DDC read\n");
+			priv->drm_edid = drm_edid_read_custom(connector,
+							      it66121_get_edid_block_direct, priv);
 		}
 
 		drm_edid_connector_update(connector, priv->drm_edid);
 
 		if (!priv->drm_edid) {
-			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes");
+			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
 			return 0;
 		}
 
-		dev_info(&priv->client->dev, "EDID read ok, monitor is %s",
-			 connector->display_info.is_hdmi ? "HDMI" : "DVI");
+		dev_dbg(&priv->client->dev, "EDID read ok, monitor is %s\n",
+			connector->display_info.is_hdmi ? "HDMI" : "DVI");
 		priv->dvi_mode = !connector->display_info.is_hdmi;
 	}
 
 	return drm_edid_connector_add_modes(connector);
 }
 
-static enum drm_mode_status it66121_connector_mode_valid(struct drm_connector *connector,
-							 const struct drm_display_mode *mode)
-{
-	/* TODO: validate mode */
-	UNUSED(connector);
-	UNUSED(mode);
-
-	return MODE_OK;
-}
-
-static struct drm_connector_helper_funcs it66121_connector_helper_funcs = {
+static const struct drm_connector_helper_funcs it66121_connector_helper_funcs = {
 	.get_modes = it66121_connector_get_modes,
-	.mode_valid = it66121_connector_mode_valid,
 };
 
 static enum drm_connector_status it66121_connector_detect(struct drm_connector *connector,
@@ -575,24 +555,19 @@ static int it66121_bind(struct device *comp, struct device *master, void *master
 	if (!adapter)
 		return -ENODEV;
 
-	dev_info(comp, "Binding IT66121 component");
-
-	/* XXX: check adapter, check bridge */
+	dev_dbg(comp, "Binding IT66121 component\n");
 
 	ret = drm_simple_display_pipe_attach_bridge(pipe, bridge);
 	if (ret)
-		dev_err(comp, "Cannot attach IT66121 bridge (%d)", ret);
+		dev_err(comp, "Cannot attach IT66121 bridge (%d)\n", ret);
 
 	return ret;
 }
 
 static void it66121_unbind(struct device *comp, struct device *master, void *master_data)
 {
-	/* TODO: drm_bridge_detach()? */
-	UNUSED(master);
-	UNUSED(master_data);
-
-	dev_info(comp, "Unbinding IT66121 component");
+	/* The bridge is detached by the DRM core when the encoder is cleaned up */
+	dev_dbg(comp, "Unbinding IT66121 component\n");
 }
 
 static const struct component_ops it66121_component_ops = {
@@ -600,20 +575,19 @@ static const struct component_ops it66121_component_ops = {
 	.unbind = it66121_unbind,
 };
 
-/* TODO: rewrite register access properly, add error processing */
 static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
-				  enum drm_bridge_attach_flags flags)
+				 enum drm_bridge_attach_flags flags)
 {
 	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
 	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR) {
-		DRM_ERROR("Need connector for mode configuration");
+		drm_err(bridge->dev, "Need connector for mode configuration\n");
 		return -ENODEV;
 	}
 
 	if (!bridge->encoder) {
-		DRM_ERROR("Parent encoder object not found");
+		drm_err(bridge->dev, "Parent encoder object not found\n");
 		return -ENODEV;
 	}
 
@@ -635,17 +609,18 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	regmap_write_bits(priv->regmap, IT66121_AFE_XP_CONTROL, (1 << 3), (1 << 3));
 	regmap_write_bits(priv->regmap, IT66121_AFE_IP_CONTROL_1, (1 << 2), (1 << 2));
 
-	/* Extra steps for AFE from original driver */
-	/* whole register is defined as XP_TEST, values are undisclosed */
+	/* Extra AFE steps from the vendor driver */
+	/* Whole register is defined as XP_TEST, values are undisclosed */
 	regmap_write_bits(priv->regmap, IT66121_AFE_XP_TEST, 0xFF, 0x70);
-	/* lower 5 bits are undisclosed in manual */
+	/* Lower 5 bits are undisclosed in manual */
 	regmap_write_bits(priv->regmap, IT66121_AFE_DRV_HS, 0xFF, 0x1F);
-	/* DRV_ISW[5:3] value '011' is a default output current level swing, with change to '111' we
-	 * set output current level swing to maximum
+	/*
+	 * DRV_ISW[5:3] value '011' is a default output current level swing, with change to '111' we
+	 * set output current level swing to maximum.
 	 */
 	regmap_write_bits(priv->regmap, IT66121_AFE_IP_CONTROL_2, 0xFF, 0x38);
 
-	/* power up IACLK, TxCLK */
+	/* Power up IACLK, TxCLK */
 	regmap_write_bits(priv->regmap, IT66121_SYS_CONTROL, (3 << 4), (0 << 4));
 
 	/* Reset according to IT66121 manual */
@@ -660,7 +635,7 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	ret = drm_connector_init(bridge->dev, &priv->connector, &it66121_connector_funcs,
 				 DRM_MODE_CONNECTOR_HDMIA);
 	if (ret) {
-		DRM_ERROR("Cannot initialize bridge connector");
+		drm_err(bridge->dev, "Cannot initialize bridge connector\n");
 		return ret;
 	}
 
@@ -668,7 +643,7 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 
 	ret = drm_connector_attach_encoder(&priv->connector, bridge->encoder);
 	if (ret) {
-		DRM_ERROR("Cannot attach bridge");
+		drm_err(bridge->dev, "Cannot attach bridge\n");
 		return ret;
 	}
 
@@ -676,7 +651,7 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC, 0);
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 
-	dev_info(bridge->dev->dev, "Bridge attached");
+	drm_dbg_kms(bridge->dev, "Bridge attached\n");
 
 	return 0;
 }
@@ -685,20 +660,17 @@ static void it66121_bridge_detach(struct drm_bridge *bridge)
 {
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
-	/* Stop the HPD polling work started by attach so it cannot notify a
-	 * bridge that is no longer attached to a DRM device
+	/*
+	 * Stop the HPD polling work started by attach so it cannot notify a
+	 * bridge that is no longer attached to a DRM device.
 	 */
 	cancel_delayed_work_sync(&priv->work);
-
-	dev_info(bridge->dev->dev, "it66121_bridge_detach");
 }
 
 static void it66121_bridge_enable(struct drm_bridge *bridge)
 {
 	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	dev_info(bridge->dev->dev, "it66121_bridge_enable");
 
 	/* Unmute AV */
 	ret = regmap_write(priv->regmap, IT66121_HDMI_AV_MUTE, 0);
@@ -711,8 +683,6 @@ static void it66121_bridge_disable(struct drm_bridge *bridge)
 	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
-	dev_info(bridge->dev->dev, "it66121_bridge_disable");
-
 	/* Mute AV */
 	ret = regmap_write_bits(priv->regmap, IT66121_HDMI_AV_MUTE, IT66121_HDMI_AV_MUTE_ON,
 				IT66121_HDMI_AV_MUTE_ON);
@@ -722,7 +692,6 @@ static void it66121_bridge_disable(struct drm_bridge *bridge)
 
 static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_display_mode *mode,
 				    const struct drm_display_mode *adjusted_mode)
-
 {
 	int ret;
 	ssize_t frame_size;
@@ -736,23 +705,19 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 		IT66121_HDMI_AVIINFO_DB13
 	};
 
-	UNUSED(adjusted_mode);
-
-	dev_info(bridge->dev->dev, "Setting AVI infoframe for mode: " DRM_MODE_FMT,
-		 DRM_MODE_ARG(mode));
+	drm_dbg_kms(bridge->dev, "Setting AVI infoframe for mode: " DRM_MODE_FMT "\n",
+		    DRM_MODE_ARG(mode));
 
 	ret = drm_hdmi_avi_infoframe_from_display_mode(&priv->hdmi_avi_infoframe, &priv->connector,
 						       mode);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot create AVI infoframe (%d)", ret);
+		drm_err(bridge->dev, "Cannot create AVI infoframe (%d)\n", ret);
 		return;
 	}
 
-	/* TODO: Set up color information here */
-
 	frame_size = hdmi_avi_infoframe_pack(&priv->hdmi_avi_infoframe, buf, sizeof(buf));
 	if (frame_size < 0) {
-		dev_err(bridge->dev->dev, "Cannot pack AVI infoframe (%ld)", frame_size);
+		drm_err(bridge->dev, "Cannot pack AVI infoframe (%zd)\n", frame_size);
 		return;
 	}
 
@@ -760,7 +725,7 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 	ret = regmap_write(priv->regmap, IT66121_HDMI_MODE,
 			   priv->dvi_mode ? IT66121_HDMI_MODE_DVI : IT66121_HDMI_MODE_HDMI);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot set TX mode (%d)", ret);
+		drm_err(bridge->dev, "Cannot set TX mode (%d)\n", ret);
 		return;
 	}
 
@@ -768,7 +733,7 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 	ret = regmap_write(priv->regmap, IT66121_HDMI_GEN_CTRL_PKT,
 			   IT66121_HDMI_GEN_CTRL_PKT_ON | IT66121_HDMI_GEN_CTRL_PKT_RPT);
 	if (ret) {
-		DRM_ERROR("Cannot enable HDMI packets");
+		drm_err(bridge->dev, "Cannot enable HDMI packets\n");
 		return;
 	}
 
@@ -776,7 +741,7 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 	ret = regmap_write(priv->regmap, IT66121_HDMI_AV_MUTE,
 			   IT66121_HDMI_AV_MUTE_ON | IT66121_HDMI_AV_MUTE_BLUE);
 	if (ret) {
-		DRM_ERROR("Cannot mute AV");
+		drm_err(bridge->dev, "Cannot mute AV\n");
 		return;
 	}
 
@@ -785,14 +750,13 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 		ret = regmap_write(priv->regmap, aviinfo_reg[i],
 				   buf[i + HDMI_INFOFRAME_HEADER_SIZE]);
 		if (ret) {
-			dev_err(bridge->dev->dev, "Cannot write AVI infoframe byte %d (%d)", i,
-				ret);
+			drm_err(bridge->dev, "Cannot write AVI infoframe byte %d (%d)\n", i, ret);
 			return;
 		}
 	}
 	ret = regmap_write(priv->regmap, IT66121_HDMI_AVIINFO_CSUM, buf[3]);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot write AVI infoframe checksum (%d)", ret);
+		drm_err(bridge->dev, "Cannot write AVI infoframe checksum (%d)\n", ret);
 		return;
 	}
 
@@ -800,7 +764,7 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 	ret = regmap_write(priv->regmap, IT66121_HDMI_AVI_INFO_PKT,
 			   IT66121_HDMI_AVI_INFO_PKT_ON | IT66121_HDMI_AVI_INFO_RPT);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot enable AVI infoframe (%d)", ret);
+		drm_err(bridge->dev, "Cannot enable AVI infoframe (%d)\n", ret);
 		return;
 	}
 
@@ -820,14 +784,14 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 	/* Configure connection, conversions, etc. */
 	ret = it66121_configure_input(priv);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot configure input bus (%d)", ret);
+		drm_err(bridge->dev, "Cannot configure input bus (%d)\n", ret);
 		return;
 	}
 
 	/* Configure AFE */
 	ret = it66121_configure_afe(priv, mode->clock);
 	if (ret) {
-		dev_err(bridge->dev->dev, "Cannot configure AFE (%d)", ret);
+		drm_err(bridge->dev, "Cannot configure AFE (%d)\n", ret);
 		return;
 	}
 
@@ -855,32 +819,15 @@ static int it66121_regs_init(struct it66121_priv *priv, struct i2c_client *clien
 {
 	priv->regmap = devm_regmap_init_i2c(client, &it66121_regmap_config);
 	if (IS_ERR(priv->regmap))
-		return (int)PTR_ERR(priv->regmap);
+		return PTR_ERR(priv->regmap);
 
 	priv->irq_pending =
 		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_SYS_STATUS_irq_pending);
 	priv->hpd = devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_SYS_STATUS_hpd);
 	priv->clr_irq =
 		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_SYS_STATUS_clr_irq);
-	priv->ddc_done =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_DDC_STATUS_ddc_done);
-	priv->ddc_error =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_DDC_STATUS_ddc_error);
-
-	priv->swap_pack =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_HDMI_DATA_SWAP_pack);
-	priv->swap_ml =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_HDMI_DATA_SWAP_ml);
-	priv->swap_yc =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_HDMI_DATA_SWAP_yc);
-	priv->swap_rb =
-		devm_regmap_field_alloc(&client->dev, priv->regmap, IT66121_HDMI_DATA_SWAP_rb);
-
-	/* Dont really care which one failed */
-	if (IS_ERR(priv->irq_pending) || IS_ERR(priv->hpd) || IS_ERR(priv->clr_irq) ||
-	    IS_ERR(priv->ddc_done) || IS_ERR(priv->ddc_error)) {
-		return -1;
-	}
+	if (IS_ERR(priv->irq_pending) || IS_ERR(priv->hpd) || IS_ERR(priv->clr_irq))
+		return -ENOMEM;
 
 	return 0;
 }
@@ -898,12 +845,13 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 		u8 b[ARRAY_SIZE(id_regs)];
 	} id;
 
-	dev_dbg(&adapter->dev, "Detecting IT66121 at address 0x%X on %s", address, adapter->name);
+	dev_dbg(&adapter->dev, "Detecting IT66121 at address 0x%X on %s\n", address,
+		adapter->name);
 
 	/* We rely on full I2C protocol + 1 byte SMBUS read for detection */
 	ret = i2c_check_functionality(adapter, I2C_FUNC_I2C | I2C_FUNC_SMBUS_READ_BYTE);
 	if (!ret) {
-		dev_dbg(&adapter->dev, "Adapter does not support I2C functions properly");
+		dev_dbg(&adapter->dev, "Adapter does not support I2C functions properly\n");
 		return -ENODEV;
 	}
 
@@ -915,18 +863,18 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 
 		ret = i2c_transfer(adapter, msgs, ARRAY_SIZE(msgs));
 		if (ret < 0) {
-			dev_err(&adapter->dev, "I2C transfer failed (%d)", ret);
+			dev_err(&adapter->dev, "I2C transfer failed (%d)\n", ret);
 			return -ENODEV;
 		}
 	}
 
 	if (id.vendor != VENDOR_ID || (id.device & ~REVISION_MASK) != DEVICE_ID) {
-		dev_dbg(&adapter->dev, "IT66121 not found (0x%X-0x%X)", id.vendor, id.device);
+		dev_dbg(&adapter->dev, "IT66121 not found (0x%X-0x%X)\n", id.vendor, id.device);
 		return -ENODEV;
 	}
 
-	dev_info(&adapter->dev, "IT66121 found, revision %d",
-		 (id.device & REVISION_MASK) >> REVISION_SHIFT);
+	dev_dbg(&adapter->dev, "IT66121 found, revision %d\n",
+		(id.device & REVISION_MASK) >> REVISION_SHIFT);
 
 	return 0;
 }
@@ -963,8 +911,9 @@ void it66121_destroy(struct i2c_client *client)
 
 	drm_bridge_remove(&priv->bridge);
 
-	/* Drops the devm reference to the bridge; priv is freed together with
-	 * the bridge once DRM releases the remaining references
+	/*
+	 * Drops the devm reference to the bridge; priv is freed together with
+	 * the bridge once DRM releases the remaining references.
 	 */
 	i2c_unregister_device(priv->client);
 }
@@ -977,18 +926,18 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 
 	client = it66121_i2c_init(adapter);
 	if (IS_ERR(client)) {
-		pr_err("Cannot find IT66121 I2C client on adapter %s\n", adapter->name);
+		dev_err(&adapter->dev, "Cannot find IT66121 I2C client\n");
 		return ERR_CAST(client);
 	}
 
-	/* DRM core takes references on the bridge, so it must be allocated with
+	/*
+	 * DRM core takes references on the bridge, so it must be allocated with
 	 * devm_drm_bridge_alloc(). Freeing happens automatically when the last
-	 * reference is dropped after i2c_unregister_device()
+	 * reference is dropped after i2c_unregister_device().
 	 */
 	priv = devm_drm_bridge_alloc(&client->dev, struct it66121_priv, bridge,
 				     &it66121_bridge_funcs);
 	if (IS_ERR(priv)) {
-		pr_err("Cannot allocate IT66121 bridge\n");
 		i2c_unregister_device(client);
 		return ERR_CAST(priv);
 	}
@@ -1005,9 +954,8 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 	drm_bridge_add(&priv->bridge);
 
 	/* Setup work queue for interrupt processing work */
-	priv->work_queue = create_workqueue("it66121_work");
+	priv->work_queue = alloc_ordered_workqueue("it66121_work", 0);
 	if (!priv->work_queue) {
-		pr_err("Create interrupt workqueue failed");
 		drm_bridge_remove(&priv->bridge);
 		i2c_unregister_device(client);
 		return ERR_PTR(-ENOMEM);
@@ -1019,7 +967,7 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 	/* Bind component of I2C client to master I2C adapter */
 	ret = component_add(&priv->client->dev, &it66121_component_ops);
 	if (ret) {
-		pr_err("Cannot register IT66121 component");
+		dev_err(&client->dev, "Cannot register IT66121 component (%d)\n", ret);
 		destroy_workqueue(priv->work_queue);
 		drm_bridge_remove(&priv->bridge);
 		i2c_unregister_device(client);
@@ -1028,5 +976,3 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 
 	return client;
 }
-EXPORT_SYMBOL(it66121_create);
-EXPORT_SYMBOL(it66121_destroy);

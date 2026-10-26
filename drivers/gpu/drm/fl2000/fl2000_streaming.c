@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Original driver uses default altsetting (#0) of streaming interface, which allows bursts of bulk
- * transfers of 15x1024 bytes on output. But the HW actually works incorrectly here: it uses same
- * endpoint #1 across interfaces 1 and 2, which is not allowed by USB specification: endpoint
- * addresses can be shared only between alternate settings, not interfaces. In order to workaround
- * this we use isochronous transfers instead of bulk. There is a possibility that we still can use
- * bulk transfers with interface 0, but this is yet to be checked.
+ * Frame streaming. The pixel data is sent as one bulk transfer per frame on
+ * endpoint 1 OUT, after switching the AV control interface (#0) to
+ * altsetting 1. The hardware exposes endpoint #1 on more than one interface,
+ * which the USB specification only allows across alternate settings.
  *
  * (C) Copyright 2017, Fresco Logic, Incorporated.
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/scatterlist.h>
+#include <linux/vmalloc.h>
+
 #include "fl2000.h"
 
-/* Triple buffering:
+/*
+ * Triple buffering:
  *  - one buffer for HDMI rendering
  *  - one buffer for USB transmission
  *  - one buffer for DRM/KMS data copy
@@ -38,7 +40,7 @@ struct fl2000_stream {
 	struct list_head render_list;
 	struct list_head transmit_list;
 	struct list_head wait_list;
-	spinlock_t list_lock; /* List access from bh and interrupt contexts */
+	spinlock_t list_lock; /* Protects the lists, taken from URB completion */
 	size_t buf_size;
 	u32 bytes_pix;
 	struct work_struct work;
@@ -68,7 +70,7 @@ static struct fl2000_stream_buf *fl2000_alloc_sb(unsigned int size)
 	struct fl2000_stream_buf *sb;
 	unsigned int nr_pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
 
-	sb = kzalloc(sizeof(*sb), GFP_KERNEL);
+	sb = kzalloc_obj(*sb);
 	if (!sb)
 		return NULL;
 
@@ -119,7 +121,8 @@ static int fl2000_stream_get_buffers(struct fl2000_stream *stream, unsigned int 
 	int ret;
 	struct fl2000_stream_buf *cur_sb;
 
-	BUG_ON(!list_empty(&stream->render_list));
+	if (WARN_ON(!list_empty(&stream->render_list)))
+		return -EBUSY;
 
 	for (int i = 0; i < FL2000_SB_NUM; i++) {
 		cur_sb = fl2000_alloc_sb(size);
@@ -141,8 +144,6 @@ error:
 static void fl2000_stream_release(struct device *dev, void *res)
 {
 	struct fl2000_stream *stream = res;
-
-	UNUSED(dev);
 
 	fl2000_stream_disable(stream);
 	destroy_workqueue(stream->work_queue);
@@ -171,7 +172,6 @@ static void fl2000_stream_data_completion(struct urb *urb)
 	usb_free_urb(urb);
 }
 
-/* TODO: convert to tasklet */
 static void fl2000_stream_work(struct work_struct *work)
 {
 	int ret;
@@ -184,7 +184,7 @@ static void fl2000_stream_work(struct work_struct *work)
 	while (stream->enabled) {
 		ret = down_interruptible(&stream->work_sem);
 		if (ret) {
-			dev_err(&usb_dev->dev, "Work interrupt error %d", ret);
+			dev_err(&usb_dev->dev, "Work interrupt error %d\n", ret);
 			stream->enabled = false;
 			return;
 		}
@@ -198,12 +198,13 @@ static void fl2000_stream_work(struct work_struct *work)
 			list_move_tail(&cur_sb->list, &stream->wait_list);
 			spin_unlock_irq(&stream->list_lock);
 		} else if (!list_empty(&stream->render_list)) {
-			/* No new frame: resend the latest one. Take a free buffer and
+			/*
+			 * No new frame: resend the latest one. Take a free buffer and
 			 * copy the last frame into it. The copy is several MB and MUST
 			 * run with interrupts enabled, so cur_sb is taken off all lists
 			 * (owned) for the duration and re-inserted afterwards. Holding
 			 * list_lock (which disables IRQs) across the memcpy starves the
-			 * whole system, e.g. amdgpu IRQs -> fence fallback timers
+			 * whole system, e.g. amdgpu IRQs -> fence fallback timers.
 			 */
 			cur_sb = list_first_entry(&stream->render_list, struct fl2000_stream_buf,
 						  list);
@@ -216,8 +217,9 @@ static void fl2000_stream_work(struct work_struct *work)
 			list_del_init(&cur_sb->list);
 			spin_unlock_irq(&stream->list_lock);
 
-			/* For a static desktop last_sb holds the same image, so an
-			 * occasional torn copy from a recycled source is invisible
+			/*
+			 * For a static desktop last_sb holds the same image, so an
+			 * occasional torn copy from a recycled source is invisible.
 			 */
 			if (last_sb != cur_sb)
 				memcpy(cur_sb->vaddr, last_sb->vaddr, stream->buf_size);
@@ -233,13 +235,14 @@ static void fl2000_stream_work(struct work_struct *work)
 
 		data_urb = usb_alloc_urb(0, GFP_KERNEL);
 		if (!data_urb) {
-			dev_err(&usb_dev->dev, "Data URB allocation error");
+			dev_err(&usb_dev->dev, "Data URB allocation error\n");
 			stream->enabled = false;
 			return;
 		}
 
-		/* Endpoint 1 bulk out. We store pointer to current stream buffer structure in
-		 * transfer_buffer field of URB which is unused due to SGT
+		/*
+		 * Endpoint 1 bulk out. We store pointer to current stream buffer structure in
+		 * transfer_buffer field of URB which is unused due to SGT.
 		 */
 		usb_fill_bulk_urb(data_urb, usb_dev, usb_sndbulkpipe(usb_dev, 1), cur_sb,
 				  (int)stream->buf_size, fl2000_stream_data_completion, stream);
@@ -251,14 +254,14 @@ static void fl2000_stream_work(struct work_struct *work)
 		usb_anchor_urb(data_urb, &stream->anchor);
 		ret = fl2000_submit_urb(data_urb);
 		if (ret) {
-			dev_err(&usb_dev->dev, "Data URB error %d", ret);
+			dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
 			usb_free_urb(data_urb);
 			stream->enabled = false;
 		}
 	}
 }
 
-static void fl2000_xrgb888_to_rgb888_line(u8 *dbuf, u32 *sbuf, u32 pixels)
+static void fl2000_xrgb8888_to_rgb888_line(u8 *dbuf, u32 *sbuf, u32 pixels)
 {
 	unsigned int xx = 0;
 
@@ -269,7 +272,7 @@ static void fl2000_xrgb888_to_rgb888_line(u8 *dbuf, u32 *sbuf, u32 pixels)
 	}
 }
 
-static void fl2000_xrgb888_to_rgb565_line(u16 *dbuf, u32 *sbuf, u32 pixels)
+static void fl2000_xrgb8888_to_rgb565_line(u16 *dbuf, u32 *sbuf, u32 pixels)
 {
 	for (unsigned int x = 0; x < pixels; x++) {
 		u16 val565 = ((sbuf[x] & 0x00F80000) >> 8) | ((sbuf[x] & 0x0000FC00) >> 5) |
@@ -296,10 +299,11 @@ void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned in
 	list_del_init(&cur_sb->list);
 	spin_unlock_irq(&stream->list_lock);
 
-	/* A whole-frame pixel format conversion is several MB of work and MUST
+	/*
+	 * A whole-frame pixel format conversion is several MB of work and MUST
 	 * run with interrupts enabled - holding list_lock (which disables IRQs)
 	 * across it starves the system (e.g. amdgpu IRQs -> fence fallback
-	 * timers, laggy desktop). cur_sb is owned here so no lock is needed
+	 * timers, laggy desktop). cur_sb is owned here so no lock is needed.
 	 */
 	dst = cur_sb->vaddr;
 	dst_line_len = width * stream->bytes_pix;
@@ -307,12 +311,13 @@ void fl2000_stream_compress(struct fl2000_stream *stream, void *src, unsigned in
 	for (unsigned int y = 0; y < height; y++) {
 		switch (stream->bytes_pix) {
 		case 2:
-			fl2000_xrgb888_to_rgb565_line(dst, src, width);
+			fl2000_xrgb8888_to_rgb565_line(dst, src, width);
 			break;
 		case 3:
-			fl2000_xrgb888_to_rgb888_line(dst, src, width);
+			fl2000_xrgb8888_to_rgb888_line(dst, src, width);
 			break;
-		default: /* Shouldn't happen */
+		default:
+			/* Rejected by fl2000_get_bytes_pix() */
 			break;
 		}
 		src += pitch;
@@ -330,7 +335,7 @@ int fl2000_stream_mode_set(struct fl2000_stream *stream, int pixels, u32 bytes_p
 	unsigned int size;
 
 	/* Round buffer size up to multiple of 8 to meet HW expectations */
-	size = (pixels * bytes_pix + 7) & ~7U;
+	size = ALIGN(pixels * bytes_pix, 8);
 
 	stream->bytes_pix = bytes_pix;
 
@@ -357,7 +362,8 @@ int fl2000_stream_mode_set(struct fl2000_stream *stream, int pixels, u32 bytes_p
 
 int fl2000_stream_enable(struct fl2000_stream *stream)
 {
-	BUG_ON(list_empty(&stream->render_list));
+	if (WARN_ON(list_empty(&stream->render_list)))
+		return -ENOMEM;
 
 	sema_init(&stream->work_sem, 0);
 	stream->enabled = true;
@@ -395,32 +401,30 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
 
 /**
  * fl2000_stream_create() - streaming processing context creation
- * @interface:	streaming transfers interface
+ * @usb_dev: FL2000 USB device
+ * @crtc: CRTC that receives the vblank events of this stream
  *
- * This function is called only on Streaming interface probe
+ * Called on DRM master bind. It shall not initiate any USB transfers: buffers
+ * and URBs are allocated later, once the mode (and thus the frame size) is
+ * known.
  *
- * It shall not initiate any USB transfers. URB is not allocated here because we do not know the
- * stream requirements yet.
- *
- * Return: Operation result
+ * Return: stream context, or an ERR_PTR() on failure
  */
 struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct drm_crtc *crtc)
 {
 	int ret;
 	struct fl2000_stream *stream;
 
-	/* Altsettung 1 on interface 0 */
+	/* Altsetting 1 on interface 0 */
 	ret = usb_set_interface(usb_dev, FL2000_USBIF_AVCONTROL, 1);
 	if (ret) {
-		dev_err(&usb_dev->dev, "Cannot set streaming interface for bulk transfers");
+		dev_err(&usb_dev->dev, "Cannot set streaming interface for bulk transfers\n");
 		return ERR_PTR(ret);
 	}
 
 	stream = devres_alloc(&fl2000_stream_release, sizeof(*stream), GFP_KERNEL);
-	if (!stream) {
-		dev_err(&usb_dev->dev, "Cannot allocate stream");
+	if (!stream)
 		return ERR_PTR(-ENOMEM);
-	}
 	devres_add(&usb_dev->dev, stream);
 
 	INIT_WORK(&stream->work, &fl2000_stream_work);
@@ -433,9 +437,9 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev, struct dr
 	stream->usb_dev = usb_dev;
 	stream->crtc = crtc;
 
-	stream->work_queue = create_workqueue("fl2000_stream");
+	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
 	if (!stream->work_queue) {
-		dev_err(&usb_dev->dev, "Allocate streaming workqueue failed");
+		dev_err(&usb_dev->dev, "Allocate streaming workqueue failed\n");
 		devres_release(&usb_dev->dev, fl2000_stream_release, NULL, NULL);
 		return ERR_PTR(-ENOMEM);
 	}

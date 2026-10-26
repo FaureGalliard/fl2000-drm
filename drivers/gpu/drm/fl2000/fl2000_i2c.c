@@ -6,9 +6,10 @@
 
 #include "fl2000.h"
 
-/* I2C controller require mandatory 8-bit (1 bite) sub-address provided for any read/write
- * operation. Each read or write operate with 8-bit (1-byte) data. Every exchange shall consist of 2
- * messages (sub-address + data) combined. USB xfer always bounds address to 4-byte boundary
+/*
+ * The I2C controller requires a mandatory 8-bit sub-address for any read/write operation. Each
+ * read or write operates on 8-bit data. Every exchange shall consist of 2 messages (sub-address +
+ * data) combined. The USB transfer always aligns the address to a 4-byte boundary.
  */
 #define I2C_CMESSAGES_NUM  2
 #define I2C_REG_ADDR_SIZE  (sizeof(u8))
@@ -41,8 +42,9 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 	offset = msgs[0].buf[0] & I2C_XFER_ADDR_MASK;
 	idx = msgs[0].buf[0] - offset;
 
-	/* We expect following:
-	 * - 2 messages, each 1 byte, first write than read
+	/*
+	 * We expect the following:
+	 * - 2 messages, each 1 byte, first write then read
 	 * - 1 message, 2 bytes, write
 	 */
 	if (num == 2) {
@@ -51,14 +53,14 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 		if (msgs[0].len == 2 && !(msgs[0].flags & I2C_M_RD))
 			read = false;
 		else
-			return -ENOTSUPP;
+			return -EOPNOTSUPP;
 	} else {
-		return -ENOTSUPP;
+		return -EOPNOTSUPP;
 	}
 
-	/* Somehow the original FL2000 driver forces offset to be bound to 4-byte margin. This is
-	 * really strange because i2c operation shall not depend on i2c margin, unless the HW design
-	 * is completely crippled. Oh, yes, it is crippled :(
+	/*
+	 * The FL2000 I2C engine only transfers aligned dwords, so the offset is aligned down to a
+	 * 4-byte boundary and the requested byte is picked out of (or merged into) the dword.
 	 */
 	if (read) {
 		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data.w);
@@ -67,9 +69,9 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 
 		msgs[1].buf[0] = data.b[idx];
 	} else {
-		/* Since FL2000 i2c bus implementation always operates with 4-byte messages, we need
-		 * to read before write in order not to corrupt unrelated registers in case if we do
-		 * not write whole dword
+		/*
+		 * Since the FL2000 I2C engine always operates on 4-byte messages, we need to read
+		 * before write in order not to corrupt the unrelated registers of the same dword.
 		 */
 		ret = fl2000_i2c_read_dword(adapter->algo_data, addr, offset, &data.w);
 		if (ret)
@@ -87,19 +89,17 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 
 static u32 fl2000_i2c_func(struct i2c_adapter *adap)
 {
-	UNUSED(adap);
 	return I2C_FUNC_I2C | I2C_FUNC_NOSTART;
 }
 
 static const struct i2c_algorithm fl2000_i2c_algorithm = {
-	.master_xfer = fl2000_i2c_xfer,
+	.xfer = fl2000_i2c_xfer,
 	.functionality = fl2000_i2c_func,
 };
 
 static const struct i2c_adapter_quirks fl2000_i2c_quirks = {
-	.flags = I2C_AQ_COMB | /* enforce "combined" mode */
-		 I2C_AQ_COMB_WRITE_FIRST | /* address write goes first */
-		 I2C_AQ_COMB_SAME_ADDR, /* both are on the same address */
+	/* Combined transfers only: an address write, then data, on the same address */
+	.flags = I2C_AQ_COMB | I2C_AQ_COMB_WRITE_FIRST | I2C_AQ_COMB_SAME_ADDR,
 	.max_num_msgs = I2C_CMESSAGES_NUM,
 	.max_write_len = 2 * I2C_REG_DATA_SIZE,
 	.max_read_len = I2C_REG_DATA_SIZE,
@@ -111,7 +111,7 @@ static void fl2000_i2c_adapter_release(struct device *dev, void *res)
 {
 	struct i2c_adapter *adapter = res;
 
-	dev_info(dev, "Releasing I2C adapter");
+	dev_dbg(dev, "Releasing I2C adapter\n");
 	i2c_del_adapter(adapter);
 }
 
@@ -128,7 +128,6 @@ struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev)
 	devres_add(&usb_dev->dev, adapter);
 
 	adapter->owner = THIS_MODULE;
-	adapter->class = I2C_CLASS_DEPRECATED;
 	adapter->algo = &fl2000_i2c_algorithm;
 	adapter->quirks = &fl2000_i2c_quirks;
 	adapter->algo_data = usb_dev;
@@ -142,7 +141,7 @@ struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev)
 	}
 
 	usb_make_path(usb_dev, usb_path, sizeof(usb_path));
-	dev_dbg(&usb_dev->dev, "Created FL2000 bridge I2C bus %d at interface %s",
+	dev_dbg(&usb_dev->dev, "Created FL2000 bridge I2C bus %d at interface %s\n",
 		i2c_adapter_id(adapter), usb_path);
 
 	return adapter;

@@ -4,6 +4,8 @@
  * (C) Copyright 2018-2019, Artem Mygaiev
  */
 
+#include <linux/delay.h>
+
 #include "fl2000.h"
 
 #define CONTROL_MSG_READ  64
@@ -13,73 +15,43 @@
 
 static bool fl2000_reg_precious(struct device *dev, unsigned int reg)
 {
-	UNUSED(dev);
 	return FL2000_REG_PRECIOUS(reg);
 }
 
 static bool fl2000_reg_volatile(struct device *dev, unsigned int reg)
 {
-	UNUSED(dev);
 	return FL2000_REG_VOLATILE(reg);
 }
 
 /* Protected by internal regmap mutex */
 static int fl2000_reg_read(void *context, unsigned int reg, unsigned int *val)
 {
-	int ret;
-	u32 *usb_rw_data;
 	struct usb_device *usb_dev = context;
-	u16 offset = (u16)reg;
+	__le32 data;
+	int ret;
 
-	usb_rw_data = kmalloc(sizeof(*usb_rw_data), GFP_KERNEL | GFP_DMA);
-	if (!usb_rw_data)
-		return -ENOMEM;
+	ret = usb_control_msg_recv(usb_dev, 0, CONTROL_MSG_READ, USB_DIR_IN | USB_TYPE_VENDOR, 0,
+				   reg, &data, sizeof(data), USB_CTRL_GET_TIMEOUT, GFP_KERNEL);
+	if (ret)
+		return ret;
 
-	ret = usb_control_msg(usb_dev, usb_rcvctrlpipe(usb_dev, 0), CONTROL_MSG_READ,
-			      (USB_DIR_IN | USB_TYPE_VENDOR), 0, offset, usb_rw_data, sizeof(u32),
-			      USB_CTRL_GET_TIMEOUT);
-	if (ret > 0) {
-		if (ret != sizeof(u32))
-			ret = -1;
-		else
-			ret = 0;
-	}
+	*val = le32_to_cpu(data);
 
-	*val = *usb_rw_data;
-
-	kfree(usb_rw_data);
-	return ret;
+	return 0;
 }
 
 /* Protected by internal regmap mutex */
 static int fl2000_reg_write(void *context, unsigned int reg, unsigned int val)
 {
-	int ret;
-	u32 *usb_rw_data;
 	struct usb_device *usb_dev = context;
-	u16 offset = (u16)reg;
+	__le32 data = cpu_to_le32(val);
 
-	usb_rw_data = kmalloc(sizeof(*usb_rw_data), GFP_KERNEL | GFP_DMA);
-	if (!usb_rw_data)
-		return -ENOMEM;
-
-	*usb_rw_data = val;
-
-	ret = usb_control_msg(usb_dev, usb_sndctrlpipe(usb_dev, 0), CONTROL_MSG_WRITE,
-			      (USB_DIR_OUT | USB_TYPE_VENDOR), 0, offset, usb_rw_data, sizeof(u32),
-			      USB_CTRL_SET_TIMEOUT);
-	if (ret > 0) {
-		if (ret != sizeof(u32))
-			ret = -1;
-		else
-			ret = 0;
-	}
-
-	kfree(usb_rw_data);
-	return ret;
+	return usb_control_msg_send(usb_dev, 0, CONTROL_MSG_WRITE, USB_DIR_OUT | USB_TYPE_VENDOR, 0,
+				    reg, &data, sizeof(data), USB_CTRL_SET_TIMEOUT, GFP_KERNEL);
 }
 
-/* We do not use default values as per documentation because:
+/*
+ * We do not use default values as per documentation because:
  *  a) somehow they differ from real HW
  *  b) on SW reset not all of them are cleared
  */
@@ -309,7 +281,7 @@ int fl2000_check_interrupt(struct usb_device *usb_dev)
 	/* Process interrupt */
 	ret = regmap_read(regmap, FL2000_VGA_STATUS_REG, &status.val);
 	if (ret)
-		return 0; /* XXX: Cannot report error here */
+		return 0; /* Treat as "no event": there is no caller to report to */
 
 	if (status.hdmi_event || status.monitor_event || status.edid_event)
 		sink_event = 1;
@@ -321,9 +293,7 @@ int fl2000_check_interrupt(struct usb_device *usb_dev)
 		fl2000_add_bitmask(mask, union fl2000_vga_status_reg, lbuf_underflow);
 	regmap_write_bits(regmap, FL2000_VGA_STATUS_REG, mask, status.val);
 
-	/* TODO: Reset LBUF using regmap_field if (status.lbuf_halt) */
-
-	/* TODO: Don't know how to recover if (status.vga_error) */
+	/* lbuf_halt and vga_error are not handled: no recovery sequence is known */
 
 	return sink_event;
 }
@@ -341,8 +311,9 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 			return -EIO;
 	}
 
-	/* This bit always reads back as 0, so we need to restore it back. Though not quite
-	 * sure if we need to enable monitor detection circuit for HDMI use case
+	/*
+	 * These bits always read back as 0, so they need to be set again on every write. It is not
+	 * clear whether the monitor detection circuit is needed at all for the HDMI use case.
 	 */
 	reg.monitor_detect = true;
 	fl2000_add_bitmask(mask, union fl2000_vga_i2c_sc_reg, monitor_detect);
@@ -366,9 +337,10 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 
 	ret = regmap_read_poll_timeout(regmap, FL2000_VGA_I2C_SC_REG, reg.val, reg.i2c_done,
 				       I2C_RDWR_INTERVAL, I2C_RDWR_TIMEOUT);
-	/* This shouldn't normally happen: there's internal 256ms HW timeout on I2C operations and
-	 * USB must be always available so no I/O errors. But if it happens we are probably in
-	 * irreversible HW issue
+	/*
+	 * This shouldn't normally happen: there's internal 256ms HW timeout on I2C operations and
+	 * USB must be always available so no I/O errors. But if it happens we are probably facing
+	 * an irreversible HW issue.
 	 */
 	if (ret || reg.i2c_status != 0)
 		return -EIO;
@@ -388,7 +360,7 @@ struct regmap *fl2000_regmap_init(struct usb_device *usb_dev)
 
 	regmap = devm_regmap_init(&usb_dev->dev, NULL, usb_dev, &fl2000_regmap_config);
 	if (IS_ERR(regmap))
-		dev_err(&usb_dev->dev, "Registers map failed (%ld)", PTR_ERR(regmap));
+		dev_err(&usb_dev->dev, "Registers map failed (%pe)\n", regmap);
 
 	return regmap;
 }

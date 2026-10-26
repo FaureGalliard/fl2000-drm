@@ -8,8 +8,8 @@
  * (C) Copyright 2019, Artem Mygaiev
  */
 
-#ifndef __FL2000_REGISTERS_H__
-#define __FL2000_REGISTERS_H__
+#ifndef FL2000_IT66121_REGS_H
+#define FL2000_IT66121_REGS_H
 
 #define IT66121_BANK_SIZE 0x100
 
@@ -29,7 +29,7 @@
 
 #define IT66121_INT_CONTROL  0x05
 #define IT66121_INT_STATUS_1 0x06
-union it666121_int_status_1_reg {
+union it66121_int_status_1_reg {
 	u32 val;
 	struct {
 		u32 __unused	    : 24;
@@ -80,8 +80,6 @@ static const struct reg_field IT66121_SYS_STATUS_clr_irq = REG_FIELD(IT66121_SYS
 #define IT66121_DDC_SEGMENT 0x14
 #define IT66121_DDC_COMMAND 0x15
 #define IT66121_DDC_STATUS  0x16
-static const struct reg_field IT66121_DDC_STATUS_ddc_done = REG_FIELD(IT66121_DDC_STATUS, 7, 7);
-static const struct reg_field IT66121_DDC_STATUS_ddc_error = REG_FIELD(IT66121_DDC_STATUS, 3, 5);
 
 #define IT66121_DDC_RD_FIFO 0x17
 /* reserved */
@@ -181,10 +179,6 @@ static const struct reg_field IT66121_DDC_STATUS_ddc_error = REG_FIELD(IT66121_D
 /* 090 - 0B2 Pattern generation registers, ignored */
 /* reserved */
 #define IT66121_HDMI_DATA_SWAP 0x0BF
-static const struct reg_field IT66121_HDMI_DATA_SWAP_pack = REG_FIELD(IT66121_HDMI_DATA_SWAP, 3, 3);
-static const struct reg_field IT66121_HDMI_DATA_SWAP_ml = REG_FIELD(IT66121_HDMI_DATA_SWAP, 2, 2);
-static const struct reg_field IT66121_HDMI_DATA_SWAP_yc = REG_FIELD(IT66121_HDMI_DATA_SWAP, 1, 1);
-static const struct reg_field IT66121_HDMI_DATA_SWAP_rb = REG_FIELD(IT66121_HDMI_DATA_SWAP, 0, 0);
 
 #define IT66121_HDMI_MODE      0x0C0
 #define IT66121_HDMI_MODE_HDMI BIT(0)
@@ -292,4 +286,4 @@ static inline bool IT66121_REG_VOLATILE(u32 reg)
 	}
 }
 
-#endif /* __FL2000_REGISTERS_H__ */
+#endif /* FL2000_IT66121_REGS_H */
