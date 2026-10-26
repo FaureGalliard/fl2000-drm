@@ -1,0 +1,101 @@
+--- a/fl2000_drv.c
++++ b/fl2000_drv.c
+@@ -15,9 +15,6 @@
+ #define USB_VENDOR_FRESCO_LOGIC 0x1D5C
+ #define USB_PRODUCT_FL2000	0x2000
+ 
+-#define FL2000_ALL_IFS \
+-	(BIT(FL2000_USBIF_AVCONTROL) | BIT(FL2000_USBIF_STREAMING) | BIT(FL2000_USBIF_INTERRUPT))
+-
+ static const struct usb_device_id fl2000_id_table[] = {
+ 	{ USB_DEVICE_INTERFACE_CLASS(USB_VENDOR_FRESCO_LOGIC, USB_PRODUCT_FL2000, USB_CLASS_AV) },
+ 	{},
+@@ -29,39 +26,9 @@
+ 	struct regmap *regmap;
+ 	struct i2c_adapter *adapter;
+ 	struct i2c_client *bridge_client;
+-	struct component_match *match;
+ 	int active_if;
+ };
+ 
+-static const struct component_master_ops fl2000_master_ops = {
+-	.bind = fl2000_drm_bind,
+-	.unbind = fl2000_drm_unbind,
+-};
+-
+-static int fl2000_compare(struct device *dev, void *data)
+-{
+-	struct i2c_client *client = i2c_verify_client(dev);
+-	struct i2c_adapter *adapter = data;
+-	static const char *const fl2000_supported_bridges[] = {
+-		"it66121",
+-	};
+-
+-	/*
+-	 * Only match clients sitting on this FL2000 instance's own I2C bus: a
+-	 * client with a matching name may belong to another FL2000 device that
+-	 * is disconnecting or re-enumerating concurrently.
+-	 */
+-	if (!client || client->adapter != adapter)
+-		return 0;
+-
+-	/* Check this is a supported DRM bridge */
+-	for (int i = 0; i < ARRAY_SIZE(fl2000_supported_bridges); i++)
+-		if (!strncmp(fl2000_supported_bridges[i], client->name, sizeof(client->name)))
+-			return 1;
+-
+-	return 0;
+-}
+-
+ static struct fl2000_devs *fl2000_get_devices(struct usb_device *usb_dev)
+ {
+ 	struct fl2000_devs *devs;
+@@ -82,8 +49,6 @@
+ 		return ERR_CAST(devs->adapter);
+ 	}
+ 
+-	component_match_add(&devs->adapter->dev, &devs->match, fl2000_compare, devs->adapter);
+-
+ 	dev_set_drvdata(&usb_dev->dev, devs);
+ 
+ 	return devs;
+@@ -173,16 +138,6 @@
+ 		break;
+ 	}
+ 
+-	/* When all interfaces are up - proceed with registration */
+-	if (devs->active_if == FL2000_ALL_IFS) {
+-		ret = component_master_add_with_match(&devs->adapter->dev, &fl2000_master_ops,
+-						      devs->match);
+-		if (ret) {
+-			dev_err(&usb_dev->dev, "Cannot register component master (%d)\n", ret);
+-			return ret;
+-		}
+-	}
+-
+ 	return ret;
+ }
+ 
+@@ -196,18 +151,11 @@
+ 		return;
+ 
+ 	/*
+-	 * The IT66121 bridge component is intentionally NOT destroyed here.
+-	 * Disconnect also runs for the transient unbind/rebind cycles of
+-	 * usb_reset_device(), where the usb_device (and the I2C adapter and
+-	 * aggregate match data) survive: the component must persist across
+-	 * those. Its destruction is a devres of the usb_device, see
+-	 * fl2000_bridge_create(). Destroying it from the master unbind path is
+-	 * also forbidden - component_del() would self-deadlock on the global
+-	 * component mutex held across the unbind callback.
++	 * The IT66121 bridge is intentionally NOT destroyed here: disconnect
++	 * also runs for the transient unbind/rebind cycles of
++	 * usb_reset_device(), where the usb_device survives. Its destruction is
++	 * a devres of the usb_device, see fl2000_bridge_create().
+ 	 */
+-	if (devs->active_if == FL2000_ALL_IFS)
+-		component_master_del(&devs->adapter->dev, &fl2000_master_ops);
+-
+ 	switch (iface_num) {
+ 	case FL2000_USBIF_AVCONTROL:
+ 	case FL2000_USBIF_STREAMING:

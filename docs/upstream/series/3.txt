@@ -1,0 +1,15 @@
+drm/fl2000: Add frame streaming
+
+Frames are sent as one bulk transfer per frame on endpoint 1 OUT, after
+switching the AV control interface to altsetting 1. A small pool of
+scatter-gather buffers (enough for three frames in flight plus one being
+filled) cycles between a render list, a transmit list and the in-flight
+list. When no new frame is ready, the previous one is sent again so the
+FL2000 always has data to scan out.
+
+The XRGB8888 framebuffer is converted by the CPU into the 24-bit or
+16-bit packed layout the FL2000 expects. Conversion and frame copies run
+with the buffer taken off the lists so that list_lock, which is also
+taken from URB completion, is never held across multi-megabyte work.
+
+The stream is wired up to KMS in the next patch.

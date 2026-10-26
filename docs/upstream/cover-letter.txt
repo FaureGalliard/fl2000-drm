@@ -13,6 +13,14 @@ I ported it to current kernels, fixed the problems found on real
 hardware (EDID, bridge lifetime across USB resets, crashes on
 disconnect) and cleaned it up for submission.
 
+The series builds the driver up in four steps, each of which compiles
+on its own:
+
+  1. USB driver, FL2000 register access (regmap) and I2C adapter
+  2. IT66121 HDMI transmitter bridge, including the EDID fallback
+  3. frame streaming over bulk URBs
+  4. the KMS pipeline, which makes the display usable
+
 It is posted as an RFC because there are design points I would like
 feedback on before doing the larger reworks:
 

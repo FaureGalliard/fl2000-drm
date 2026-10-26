@@ -15,6 +15,12 @@
 # included) to [output-dir] (default: ./outgoing). Nothing is sent: see
 # docs/UPSTREAMING.md for the review and sending steps.
 #
+# The driver is split into a series of patches that each build on their
+# own; docs/upstream/series/<n>.txt are their commit messages and
+# docs/upstream/stages/ holds the reduced intermediate versions of the
+# files that grow over the series. Set CHECK_BUILD=1 (in an already
+# configured tree with CONFIG_DRM_FL2000=m) to build-test every patch.
+#
 # Patch identity comes from git config user.name / user.email in the
 # linux tree. The patch carries a Signed-off-by for that identity: adding
 # it certifies the Developer's Certificate of Origin
@@ -49,12 +55,45 @@ fi
 BASE="$(git rev-parse HEAD)"
 git checkout -q -B "$BRANCH" "$BASE"
 
-# --- driver sources -------------------------------------------------------
+STAGES="$REPO/docs/upstream/stages"
+SERIES="$REPO/docs/upstream/series"
+
+# Copy final versions of the given files into the tree, then turn the files
+# that only exist in reduced form at this point of the series into that form
+# (docs/upstream/stages/<n>-<file>.diff, applied to the final version).
+stage() {
+	local n=$1 f
+	shift
+	for f in "$@"; do
+		cp "$REPO/$DRV/$f" "$DRV/$f"
+	done
+	for f in "$STAGES/$n"-*.diff; do
+		[ -e "$f" ] || continue
+		cp "$REPO/$DRV/$(basename "$f" .diff | cut -d- -f2-)" "$DRV/"
+		patch -s -p1 -d "$DRV" < "$f"
+	done
+}
+
+commit_stage() {
+	local n=$1
+	shift
+	git add "$DRV" "$@"
+	git commit -q -s -F "$SERIES/$n.txt"
+	if [ -n "${CHECK_BUILD:-}" ]; then
+		# Every patch must build on its own (bisectability)
+		make -s W=1 "$DRV/"
+		echo "patch $n builds"
+	fi
+}
+
 rm -rf "$DRV"
 mkdir -p "$DRV"
-cp "$REPO/$DRV"/Kconfig "$REPO/$DRV"/Makefile "$REPO/$DRV"/*.[ch] "$DRV"/
 
-# --- Kconfig (alphabetical) and Makefile (next to udl) hooks --------------
+# --- 1: USB driver, registers, I2C, Kbuild and MAINTAINERS hooks ---------
+stage 1 Kconfig Makefile fl2000.h fl2000_drv.c fl2000_registers.h fl2000_registers.c \
+	fl2000_i2c.c
+
+# Kconfig (alphabetical) and Makefile (next to udl) hooks
 grep -q 'drm/fl2000/Kconfig' drivers/gpu/drm/Kconfig ||
 	sed -i '/^source "drivers\/gpu\/drm\/fsl-dcu\/Kconfig"/i source "drivers/gpu/drm/fl2000/Kconfig"' \
 		drivers/gpu/drm/Kconfig
@@ -64,7 +103,7 @@ grep -q 'CONFIG_DRM_FL2000' drivers/gpu/drm/Makefile ||
 grep -q 'drm/fl2000/Kconfig' drivers/gpu/drm/Kconfig
 grep -q 'CONFIG_DRM_FL2000' drivers/gpu/drm/Makefile
 
-# --- MAINTAINERS, kept in alphabetical order ------------------------------
+# MAINTAINERS, kept in alphabetical order
 if ! grep -q '^F:	drivers/gpu/drm/fl2000/' MAINTAINERS; then
 	ENTRY="DRM DRIVER FOR FRESCO LOGIC FL2000 USB DISPLAY ADAPTERS
 M:	$NAME <$EMAIL>
@@ -78,9 +117,24 @@ F:	drivers/gpu/drm/fl2000/
 		s/^(DRM DRIVER FOR GENERIC EDP PANELS\n)/$e\n$1/m or die "MAINTAINERS anchor not found\n";
 	' MAINTAINERS
 fi
+commit_stage 1 drivers/gpu/drm/Kconfig drivers/gpu/drm/Makefile MAINTAINERS
 
-git add "$DRV" drivers/gpu/drm/Kconfig drivers/gpu/drm/Makefile MAINTAINERS
-git commit -q -s -F "$REPO/docs/upstream/commit-message.txt"
+# --- 2: IT66121 bridge ----------------------------------------------------
+stage 2 fl2000_it66121.h fl2000_it66121_regs.h fl2000_it66121.c
+commit_stage 2
+
+# --- 3: frame streaming ---------------------------------------------------
+stage 3 fl2000_streaming.c
+commit_stage 3
+
+# --- 4: KMS pipeline: the final driver ------------------------------------
+stage 4 Kconfig Makefile fl2000.h fl2000_drv.c fl2000_drm.c fl2000_interrupt.c
+commit_stage 4
+
+# The end of the series must be exactly the driver in this repository
+diff -r "$REPO/$DRV" "$DRV" -x '*.o' -x '*.ko' -x '*.mod*' -x '.*' -x modules.order \
+	-x Module.symvers >/dev/null ||
+	{ echo "series does not end with the repository's driver" >&2; exit 1; }
 
 # --- series ---------------------------------------------------------------
 rm -rf "$OUT"
@@ -106,4 +160,4 @@ echo "== checkpatch =="
 ./scripts/checkpatch.pl --strict "$OUT"/*.patch || true
 echo
 echo "== get_maintainer (To/Cc candidates) =="
-./scripts/get_maintainer.pl --no-rolestats "$OUT"/*0001-*.patch || true
+./scripts/get_maintainer.pl --no-rolestats "$OUT"/*000[1-9]-*.patch || true

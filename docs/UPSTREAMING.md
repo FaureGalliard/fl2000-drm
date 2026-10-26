@@ -52,7 +52,9 @@ scripts/make-upstream-series.sh ~/linux-drm-misc        # deja los .patch en ./o
 
 El script copia `drivers/gpu/drm/fl2000/` al árbol, añade las líneas en
 `drivers/gpu/drm/Kconfig`, `drivers/gpu/drm/Makefile` y la entrada de
-`MAINTAINERS`, hace un commit con el mensaje de `docs/upstream/commit-message.txt`
+`MAINTAINERS`, crea **4 commits** (uno por parche, mensajes en
+`docs/upstream/series/1..4.txt`; las versiones intermedias de los archivos
+que crecen están en `docs/upstream/stages/`)
 y genera la serie con la carta de presentación
 (`docs/upstream/cover-letter.txt`). Al final ejecuta `checkpatch.pl --strict`
 y `get_maintainer.pl`.

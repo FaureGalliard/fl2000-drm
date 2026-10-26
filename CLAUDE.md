@@ -148,4 +148,9 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
   add co-author trailers (the maintainer publishes this fork under their own
   name, with upstream attribution kept in the README). The upstream kernel
   patch uses kernel style instead (`drm/fl2000: ...`, see
-  `docs/upstream/commit-message.txt`).
+  `docs/upstream/series/`). The upstream series is 4 patches (USB/regmap/I2C,
+  IT66121, streaming, KMS). If you change `fl2000_drv.c`, `fl2000.h` or the
+  Makefile, regenerate `docs/upstream/stages/*.diff` (reduced versions of
+  those files for patches 1-3); the script fails if they no longer apply or
+  if the end of the series differs from `drivers/gpu/drm/fl2000/`. Use
+  `CHECK_BUILD=1` to build-test every patch.
