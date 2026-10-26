@@ -23,7 +23,7 @@
 #include <drm/drm_encoder.h>
 #include <drm/drm_simple_kms_helper.h>
 
-#include "it66121_registers.h"
+#include "fl2000_it66121_regs.h"
 
 #define UNUSED(x) ((void)(x))
 

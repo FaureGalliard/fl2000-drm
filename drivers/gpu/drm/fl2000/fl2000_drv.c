@@ -5,7 +5,7 @@
  */
 
 #include "fl2000.h"
-#include "bridge/it66121.h"
+#include "fl2000_it66121.h"
 
 #define USB_DRIVER_NAME "fl2000_usb"
 

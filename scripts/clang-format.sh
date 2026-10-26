@@ -7,7 +7,7 @@ if [ ! -f .clang-format ]; then
 fi
 
 declare -i status=0
-for file in {,bridge/}*.[ch]
+for file in drivers/gpu/drm/fl2000/*.[ch]
 do
 	if [[ $file == *.mod.c ]]; then
 		continue

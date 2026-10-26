@@ -6,8 +6,8 @@
 
 #include <linux/unaligned.h>
 
-#include "it66121.h"
-#include "../fl2000.h"
+#include "fl2000_it66121.h"
+#include "fl2000.h"
 
 #define VENDOR_ID      0x4954
 #define DEVICE_ID      0x0612

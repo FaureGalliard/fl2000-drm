@@ -63,7 +63,7 @@ make clean
 make KVER=$(uname -r)
 
 # Install (as root)
-sudo cp fl2000.ko it66121.ko /lib/modules/$(uname -r)/extra/
+sudo cp fl2000.ko /lib/modules/$(uname -r)/extra/
 sudo depmod -a
 
 # Load
@@ -110,20 +110,19 @@ cat /sys/class/drm/*/device/name
 
 ```
 fl2000_drm/
-├── fl2000.h              # Main header file
-├── fl2000_drv.c          # USB driver core
-├── fl2000_drm.c          # DRM implementation
-├── fl2000_streaming.c    # USB streaming
-├── fl2000_i2c.c          # I2C interface
-├── fl2000_interrupt.c    # Interrupt handling
-├── fl2000_registers.c   # Hardware registers
-├── bridge/
-│   ├── it66121.h         # Bridge header
-│   ├── it66121_drv.c     # IT66121 bridge driver
-│   └── it66121_registers.h
-├── Makefile              # Build system
-├── install.sh            # Installation script
-└── README.md             # This file
+├── drivers/gpu/drm/fl2000/     # Driver, laid out as in the kernel tree
+│   ├── Kconfig / Makefile      # Kbuild integration (CONFIG_DRM_FL2000)
+│   ├── fl2000.h                # Main header file
+│   ├── fl2000_drv.c            # USB driver core
+│   ├── fl2000_drm.c            # DRM implementation
+│   ├── fl2000_streaming.c      # USB streaming
+│   ├── fl2000_i2c.c            # I2C interface
+│   ├── fl2000_interrupt.c      # Interrupt handling
+│   ├── fl2000_registers.[ch]   # Hardware registers
+│   └── fl2000_it66121.[ch]     # IT66121 HDMI bridge
+├── Makefile                    # Out-of-tree build wrapper
+├── install.sh                  # Installation script
+└── README.md                   # This file
 ```
 
 ## Troubleshooting
