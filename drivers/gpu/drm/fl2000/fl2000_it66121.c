@@ -38,6 +38,8 @@ struct it66121_priv {
 
 	/* Serializes users of the DDC engine (multi-step EDID FIFO reads) */
 	struct mutex ddc_lock;
+	/* The EDID is read through the FL2000 bus, not the IT66121 FIFO, on this board */
+	bool edid_direct;
 
 	struct regmap_field *irq_pending;
 	struct regmap_field *hpd;
@@ -458,31 +460,49 @@ static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int bl
 static int it66121_connector_get_modes(struct drm_connector *connector)
 {
 	struct it66121_priv *priv = container_of(connector, struct it66121_priv, connector);
+	int (*first)(void *context, u8 *buf, unsigned int block, size_t len);
+	int (*second)(void *context, u8 *buf, unsigned int block, size_t len);
+
+	/*
+	 * Read the EDID on every probe: the DRM core drops it from the
+	 * connector when the monitor goes away, and a different monitor may be
+	 * plugged in next.
+	 */
+	drm_edid_free(priv->drm_edid);
+
+	/*
+	 * Board wirings differ: try the direct FL2000-bus DDC read if the
+	 * IT66121 EDID FIFO path did not work, and start with whichever worked
+	 * last time so the FIFO path's timeouts are paid once.
+	 */
+	if (priv->edid_direct) {
+		first = it66121_get_edid_block_direct;
+		second = it66121_get_edid_block;
+	} else {
+		first = it66121_get_edid_block;
+		second = it66121_get_edid_block_direct;
+	}
+
+	priv->drm_edid = drm_edid_read_custom(connector, first, priv);
+	if (priv->drm_edid) {
+		dev_dbg(&priv->client->dev, "EDID read ok\n");
+	} else {
+		dev_dbg(&priv->client->dev, "EDID read failed, trying the other DDC path\n");
+		priv->drm_edid = drm_edid_read_custom(connector, second, priv);
+		if (priv->drm_edid)
+			priv->edid_direct = !priv->edid_direct;
+	}
+
+	drm_edid_connector_update(connector, priv->drm_edid);
 
 	if (!priv->drm_edid) {
-		priv->drm_edid = drm_edid_read_custom(connector, it66121_get_edid_block, priv);
-
-		/*
-		 * Board wirings differ: try the direct FL2000-bus DDC read if
-		 * the IT66121 EDID FIFO path did not work.
-		 */
-		if (!priv->drm_edid) {
-			dev_dbg(&priv->client->dev, "EDID FIFO read failed, trying direct DDC read\n");
-			priv->drm_edid = drm_edid_read_custom(connector,
-							      it66121_get_edid_block_direct, priv);
-		}
-
-		drm_edid_connector_update(connector, priv->drm_edid);
-
-		if (!priv->drm_edid) {
-			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
-			return 0;
-		}
-
-		dev_dbg(&priv->client->dev, "EDID read ok, monitor is %s\n",
-			connector->display_info.is_hdmi ? "HDMI" : "DVI");
-		priv->dvi_mode = !connector->display_info.is_hdmi;
+		dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
+		return 0;
 	}
+
+	dev_dbg(&priv->client->dev, "Monitor is %s\n",
+		connector->display_info.is_hdmi ? "HDMI" : "DVI");
+	priv->dvi_mode = !connector->display_info.is_hdmi;
 
 	return drm_edid_connector_add_modes(connector);
 }
