@@ -124,6 +124,15 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
 - **URB completion handlers run in atomic context.** No `GFP_KERNEL`, no
   `usb_clear_halt()`, no `cond_resched()` there; use `spin_lock_irqsave()`.
   `fl2000_submit_urb()` sleeps and is for process context only.
+- **The DRM device must not be a child of the I2C adapter.** `i2c_del_adapter()`
+  (run when the USB device is unbound) waits for every reference on the
+  adapter; a DRM device parented there holds one, so the hub worker blocks
+  forever and nothing enumerates again after an unplug. It is parented to the
+  USB device (`__drm_dev_alloc()`, DMA device = the host controller) and
+  released with an explicit `drm_dev_put()` in `fl2000_drm_if_release()`.
+- **Every `usb_anchor_urb()` needs a `usb_unanchor_urb()` when the submission
+  fails.** A freed URB left on the anchor makes `usb_kill_anchored_urbs()` spin
+  forever (hang on unplug).
 - **The IT66121 I2C client must not be named `"it66121"`.** That is the
   in-tree `ite-it66121` driver's `i2c_device_id`. If that driver is built, it
   would try to bind our client, fail without an OF node, and release our

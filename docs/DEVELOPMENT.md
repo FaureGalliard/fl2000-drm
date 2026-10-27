@@ -73,6 +73,8 @@ found. All are fixed.
 | Symptom | Root cause |
 |---|---|
 | Hard kernel hang on disconnect | `it66121_destroy()` → `component_del()` called from the master unbind callback, which already holds the global component mutex → self-deadlock |
+| Machine hangs when the adapter is unplugged while streaming | A data URB whose submission failed (`-ENODEV`) was freed while still on the stream's anchor; `usb_kill_anchored_urbs()` then spun forever on the dangling entry. Fixed with `usb_unanchor_urb()` |
+| After an unplug the dongle never enumerates again (`usb_hub_wq` stuck in `i2c_del_adapter()`) | The DRM device was a child of the I2C adapter and so held a reference on it, while `i2c_del_adapter()` waits for all references. The DRM device is now a child of the USB device and `drm_dev_put()` is explicit in `fl2000_drm_if_release()` |
 | Display torn down ~30 s after every plug | SCSI timeout on the virtual CD → `usb_reset_device()` on the whole dongle |
 | Driver never re-binds after a USB reset | Probe bailed out with `-ENODEV` because the bridge had been destroyed on disconnect while `devs` survived |
 | `modprobe` appears to freeze the terminal | Probe runs synchronously in modprobe context while the device is stuck in the reset cycle; not a driver hang. Load the module with the adapter unplugged, then plug it (probe runs in a udev worker) |

@@ -583,9 +583,11 @@ static void fl2000_drm_if_release(struct device *dev, void *res)
 	fl2000_intr_destroy(usb_dev);
 
 	/*
-	 * Final drm_dev_put() is handled by devm from devm_drm_dev_alloc() when
-	 * the master device goes away.
+	 * Drop the driver's reference. The DRM device is freed when the last
+	 * userspace file is closed; it only pins the USB device, never the I2C
+	 * adapter, so the disconnect does not wait for userspace.
 	 */
+	drm_dev_put(drm);
 }
 
 int fl2000_drm_bind(struct device *master)
@@ -599,7 +601,16 @@ int fl2000_drm_bind(struct device *master)
 
 	dev_dbg(master, "Binding FL2000 master\n");
 
-	drm_if = devm_drm_dev_alloc(master, &fl2000_drm_driver, struct fl2000_drm_if, drm);
+	/*
+	 * The DRM device is a child of the USB device, not of the I2C adapter
+	 * that is the component master. It holds a reference on its parent, and
+	 * i2c_del_adapter() (run when the USB device is unbound) waits for every
+	 * reference on the adapter: parenting it there deadlocks the hub worker
+	 * on unplug and no device enumerates again. The put is explicit, in
+	 * fl2000_drm_if_release().
+	 */
+	drm_if = __drm_dev_alloc(&usb_dev->dev, &fl2000_drm_driver, sizeof(*drm_if),
+				 offsetof(struct fl2000_drm_if, drm));
 	if (IS_ERR(drm_if)) {
 		dev_err(master, "Cannot allocate DRM structure (%pe)\n", drm_if);
 		return PTR_ERR(drm_if);
@@ -607,14 +618,18 @@ int fl2000_drm_bind(struct device *master)
 	drm = &drm_if->drm;
 	drm_if->usb_dev = usb_dev;
 
+	/* A USB device cannot DMA by itself: dma-buf imports go through its host controller */
+	drm_dev_set_dma_dev(drm, usb_dev->bus->sysdev);
+
 	/*
 	 * Devres that fl2000_drm_unbind() releases to tear everything down,
-	 * registered once binding succeeded. Note that 'drm_if' itself is
-	 * managed by devm_drm_dev_alloc().
+	 * registered once binding succeeded.
 	 */
 	holder = devres_alloc(fl2000_drm_if_release, sizeof(*holder), GFP_KERNEL);
-	if (!holder)
+	if (!holder) {
+		drm_dev_put(drm);
 		return -ENOMEM;
+	}
 
 	ret = drmm_mode_config_init(drm);
 	if (ret) {
@@ -734,6 +749,7 @@ err_destroy_stream:
 	fl2000_stream_destroy(usb_dev);
 err_free_holder:
 	devres_free(holder);
+	drm_dev_put(drm);
 	return ret;
 }
 
