@@ -568,6 +568,14 @@ static void fl2000_stream_work(struct work_struct *work)
 		ret = fl2000_submit_urb(data_urb);
 		if (ret) {
 			dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
+			/*
+			 * A URB that was never submitted stays on the anchor.
+			 * Freeing it there leaves a dangling entry that
+			 * usb_kill_anchored_urbs() would spin on forever,
+			 * which hangs the machine when the adapter is
+			 * unplugged while streaming.
+			 */
+			usb_unanchor_urb(data_urb);
 			usb_free_urb(data_urb);
 			WRITE_ONCE(stream->enabled, false);
 		}
