@@ -11,7 +11,7 @@ A native DRM/KMS driver: your compositor sees a real display, with EDID, atomic 
 ![Chipset](https://img.shields.io/badge/chipset-FL2000DX%20%2B%20IT66121-orange)
 ![USB ID](https://img.shields.io/badge/USB-1d5c%3A2000-555)
 ![Status](https://img.shields.io/badge/status-working%20%C2%B7%201080p60-2ea043)
-[![Stars](https://img.shields.io/github/stars/FaureGalliard/fl2000_drm_kernel7.1?style=flat)](https://github.com/FaureGalliard/fl2000_drm_kernel7.1/stargazers)
+[![Stars](https://img.shields.io/github/stars/FaureGalliard/fl2000-drm?style=flat)](https://github.com/FaureGalliard/fl2000-drm/stargazers)
 
 **[🚀 Quick start](#-quick-start)** · [Hardware](#-supported-hardware) · [Troubleshooting](#-troubleshooting) · [Changelog](CHANGELOG.md) · [Development notes](docs/DEVELOPMENT.md)
 
@@ -59,7 +59,7 @@ lsusb -d 1d5c:2000
 
 Tested on Arch Linux, kernel 7.1.x, HP Pavilion 15 (amdgpu), LG 22MP55 monitor.
 Other boards with the same chips should work — reports are welcome in
-[Issues](https://github.com/FaureGalliard/fl2000_drm_kernel7.1/issues).
+[Issues](https://github.com/FaureGalliard/fl2000-drm/issues).
 
 ---
 
@@ -78,7 +78,7 @@ sudo apt install build-essential linux-headers-$(uname -r) # Debian / Ubuntu
 ### 2. Build and install
 
 ```bash
-git clone https://github.com/FaureGalliard/fl2000_drm_kernel7.1.git && cd fl2000_drm_kernel7.1 && sudo ./install.sh
+git clone https://github.com/FaureGalliard/fl2000-drm.git && cd fl2000-drm && sudo ./install.sh
 ```
 
 `install.sh` compiles the module, signs it if Secure Boot is enabled, installs
