@@ -4,7 +4,6 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
-#include <linux/dma-buf.h>
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
@@ -144,77 +143,8 @@ static struct drm_driver fl2000_drm_driver = {
 	.patchlevel = DRM_DRIVER_PATCHLEVEL,
 };
 
-/* What to do with a framebuffer the compositor imported from another GPU */
-enum fl2000_import_policy {
-	FL2000_IMPORT_NEVER = 0,	/* refuse every imported buffer */
-	FL2000_IMPORT_ALWAYS = 1,	/* accept them all */
-	FL2000_IMPORT_SYSTEM = 2,	/* accept only those backed by system RAM */
-};
-
-static int allow_import = FL2000_IMPORT_ALWAYS;
-module_param(allow_import, int, 0644);
-MODULE_PARM_DESC(allow_import,
-		 "Imported framebuffers: 0 refuse, 1 accept (default), 2 accept only system memory");
-
-/*
- * A compositor driving a secondary GPU hands it the primary GPU's scanout
- * buffer whenever the secondary accepts it. If that buffer is in VRAM, every
- * pixel read crosses PCIe; with streaming loads a 1080p frame costs ~8 ms,
- * without them ~88 ms. Refusing imports instead forces the compositor into a
- * CPU copy path of its own, which has been seen to leak GTT memory until the
- * whole desktop stalls, so accepting is the default. The stricter policies stay
- * selectable at runtime for CPUs without the streaming-load path.
- */
-static bool fl2000_import_is_system_memory(struct drm_gem_object *obj)
-{
-	struct iosys_map map;
-	bool system;
-
-	if (dma_buf_vmap_unlocked(obj->import_attach->dmabuf, &map))
-		return false;
-
-	system = !map.is_iomem;
-	dma_buf_vunmap_unlocked(obj->import_attach->dmabuf, &map);
-
-	return system;
-}
-
-static struct drm_framebuffer *fl2000_fb_create(struct drm_device *drm, struct drm_file *file,
-						const struct drm_format_info *info,
-						const struct drm_mode_fb_cmd2 *mode_cmd)
-{
-	struct drm_gem_object *obj;
-	bool reject = false;
-
-	obj = drm_gem_object_lookup(file, mode_cmd->handles[0]);
-	if (!obj)
-		return ERR_PTR(-ENOENT);
-
-	if (obj->import_attach) {
-		switch (READ_ONCE(allow_import)) {
-		case FL2000_IMPORT_ALWAYS:
-			break;
-		case FL2000_IMPORT_SYSTEM:
-			reject = !fl2000_import_is_system_memory(obj);
-			break;
-		default:
-			reject = true;
-			break;
-		}
-	}
-
-	drm_gem_object_put(obj);
-
-	if (reject) {
-		drm_dbg_kms(drm, "Rejecting imported framebuffer\n");
-		return ERR_PTR(-EINVAL);
-	}
-
-	return drm_gem_fb_create_with_dirty(drm, file, info, mode_cmd);
-}
-
 static const struct drm_mode_config_funcs fl2000_mode_config_funcs = {
-	.fb_create = fl2000_fb_create,
+	.fb_create = drm_gem_fb_create_with_dirty,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
@@ -407,9 +337,7 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	if (!fb)
 		return; /* plane is disabled */
 
-	if (fl2000_stream_full_frame())
-		damage = (struct drm_rect){ 0, 0, fb->width, fb->height };
-	else if (!drm_atomic_helper_damage_merged(old_plane_state, plane_state, &damage))
+	if (!drm_atomic_helper_damage_merged(old_plane_state, plane_state, &damage))
 		return;
 
 	if (drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE))
@@ -458,7 +386,7 @@ static void fl2000_cursor_atomic_update(struct drm_plane *plane, struct drm_atom
 	h = fb->height;
 
 	/* Repack into a tightly packed sprite: the framebuffer has its own pitch */
-	sprite = kmalloc_array((size_t)w * h, sizeof(u32), GFP_KERNEL);
+	sprite = kmalloc_objs(*sprite, (size_t)w * h);
 	if (!sprite)
 		return;
 

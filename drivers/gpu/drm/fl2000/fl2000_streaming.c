@@ -42,28 +42,6 @@
 /* Must cover FL2000_MAX_WIDTH from fl2000_drm.c */
 #define FL2000_MAX_LINE_PIXELS 4096
 
-/*
- * Diagnostic: convert the whole frame on every update instead of the damage
- * the compositor reports. Writable at runtime, so a suspected damage-tracking
- * problem can be confirmed without reloading the module.
- */
-static bool full_frame;
-module_param(full_frame, bool, 0644);
-MODULE_PARM_DESC(full_frame, "Ignore damage clips and convert the whole frame");
-
-/*
- * Read an I/O-memory source with streaming loads. Writable at runtime so the
- * two read paths can be compared.
- */
-static bool fast_wc = true;
-module_param(fast_wc, bool, 0644);
-MODULE_PARM_DESC(fast_wc, "Use streaming loads to read I/O memory sources");
-
-bool fl2000_stream_full_frame(void)
-{
-	return READ_ONCE(full_frame);
-}
-
 struct fl2000_stream_buf {
 	struct list_head list;
 	/*
@@ -641,7 +619,7 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
 	struct iosys_map dst = IOSYS_MAP_INIT_VADDR(stream->line_buf);
 	struct iosys_map src = *src_map;
 
-	if (!src_map->is_iomem || !READ_ONCE(fast_wc)) {
+	if (!src_map->is_iomem) {
 		iosys_map_memcpy_from(stream->line_buf, src_map, offset, len);
 		return;
 	}
@@ -892,10 +870,10 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 	stream->usb_dev = usb_dev;
 
 	/* One scanline of source pixels, for the widest mode we advertise */
-	stream->line_buf = kmalloc_array(FL2000_MAX_LINE_PIXELS, sizeof(u32), GFP_KERNEL);
+	stream->line_buf = kmalloc_objs(*stream->line_buf, FL2000_MAX_LINE_PIXELS);
 	/* The largest cursor, allocated once: the atomic update must not fail */
-	stream->cursor_argb = kmalloc_array(FL2000_CURSOR_MAX * FL2000_CURSOR_MAX, sizeof(u32),
-					    GFP_KERNEL);
+	stream->cursor_argb = kmalloc_objs(*stream->cursor_argb,
+					   FL2000_CURSOR_MAX * FL2000_CURSOR_MAX);
 	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
 	if (!stream->line_buf || !stream->cursor_argb || !stream->work_queue) {
 		if (stream->work_queue)
