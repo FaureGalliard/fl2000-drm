@@ -1,17 +1,28 @@
 drm/fl2000: Add frame streaming
 
 Frames are sent as one bulk transfer per frame on endpoint 1 OUT, after
-switching the AV control interface to altsetting 1. A small pool of
-scatter-gather buffers (enough for three frames in flight plus one being
-filled) cycles between a render list, a transmit list and the in-flight
-list. When no new frame is ready, the previous one is sent again so the
-FL2000 always has data to scan out.
+switching the AV control interface to altsetting 1. Three URBs are kept
+in flight from a pool of six scatter-gather buffers, and when no new
+frame is ready the current one is sent again, so the FL2000 always has
+data to scan out.
 
-Frames are converted with the drm_fb_xrgb8888_to_rgb888()/_rgb565()
-helpers; the FL2000 additionally wants the two 32-bit halves of every
-64-bit word swapped, which is done over the whole buffer. Conversion and
-frame copies run with the buffer taken off the lists so that list_lock,
-which is also taken from URB completion, is never held across
-multi-megabyte work.
+The current frame is kept in a shadow buffer in the device's pixel
+format. Only the damaged rectangle of the framebuffer is converted, into
+the shadow, and each outgoing buffer is brought up to date from it just
+before it is submitted, by replaying the damage rectangles it missed or
+with a full copy when it is too far behind. The send path never waits
+for a conversion in progress: it resends the newest complete frame
+instead. A cursor sprite is blended into each outgoing buffer rather
+than into the shadow, so moving the pointer does not touch the
+framebuffer.
+
+The framebuffer is often a buffer imported from the primary GPU and
+lives in its VRAM, mapped write-combined. It is read a scanline at a
+time with drm_memcpy_from_wc(), which uses streaming loads: a 1080p
+frame then converts in about 8 ms instead of the ~88 ms of
+memcpy_fromio(). The FL2000 wants the two 32-bit halves of every 64-bit
+word swapped, which the converters do as they write. Copies run with the
+buffer taken off the lists, so list_lock, which is also taken from URB
+completion, is never held across multi-megabyte work.
 
 The stream is wired up to KMS in the next patch.

@@ -3,10 +3,14 @@ drm/fl2000: Add KMS display pipeline
 Register the DRM device once all FL2000 interfaces are bound and the
 IT66121 component is available, and connect the pieces:
 
-- a single plane/CRTC/encoder pipeline with GEM SHMEM framebuffers,
-  accessed through the shadow-plane helpers, and XRGB8888 as the only
-  format. The framebuffer is only read by the CPU, so it does not need
-  to be physically contiguous
+- a primary plane, a cursor plane, a CRTC and an encoder, with GEM
+  SHMEM framebuffers accessed through the shadow-plane helpers and
+  XRGB8888 as the only format. The framebuffer is only read by the CPU,
+  so it does not need to be physically contiguous. The primary plane
+  passes its merged damage to the stream; the cursor plane hands over
+  its sprite, or only its position when the framebuffer is unchanged.
+  Without a cursor plane, compositors keep the pointer on the primary
+  GPU and it never appears on this output
 - mode validation and PLL search in the CRTC's atomic_check (which may
   adjust htotal and the clock in adjusted_mode), and FL2000 programming
   in mode_set_nofb, before the bridge's mode_set
@@ -17,4 +21,5 @@ IT66121 component is available, and connect the pieces:
 
 Tested on x86_64 with a UGREEN USB 3.0 to HDMI adapter (FL2000DX +
 IT66121FN) and a 1920x1080 monitor: EDID, mode setting and a GNOME
-Wayland desktop work.
+Wayland desktop work, with the cursor, at 59 frames per second on the
+link and no measurable effect on the rest of the system.
