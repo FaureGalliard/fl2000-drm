@@ -7,8 +7,10 @@
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
+#include <drm/drm_connector.h>
 #include <drm/drm_fbdev_shmem.h>
 #include <drm/drm_gem_atomic_helper.h>
+#include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank_helper.h>
 
 #include "fl2000.h"
@@ -598,6 +600,8 @@ int fl2000_drm_bind(struct device *master)
 	struct fl2000_drm_if **holder;
 	struct drm_device *drm;
 	struct drm_mode_config *mode_config;
+	struct drm_connector_list_iter conn_iter;
+	struct drm_connector *connector;
 
 	dev_dbg(master, "Binding FL2000 master\n");
 
@@ -721,6 +725,24 @@ int fl2000_drm_bind(struct device *master)
 		goto err_unbind;
 	}
 
+	fl2000_reset(usb_dev);
+	fl2000_usb_magic(usb_dev);
+
+	/*
+	 * Probe the connector before userspace can see the device. A compositor
+	 * that finds a new GPU reads the cached connector state without probing
+	 * it, and does not look again when the hotplug event follows; with an
+	 * unprobed connector it never enables the output until something else
+	 * makes it reload.
+	 */
+	mutex_lock(&drm->mode_config.mutex);
+	drm_connector_list_iter_begin(drm, &conn_iter);
+	drm_for_each_connector_iter(connector, &conn_iter)
+		drm_helper_probe_single_connector_modes(connector, FL2000_MAX_WIDTH,
+							FL2000_MAX_HEIGHT);
+	drm_connector_list_iter_end(&conn_iter);
+	mutex_unlock(&drm->mode_config.mutex);
+
 	ret = drm_dev_register(drm, 0);
 	if (ret) {
 		drm_err(drm, "Cannot register DRM device (%d)\n", ret);
@@ -729,9 +751,6 @@ int fl2000_drm_bind(struct device *master)
 
 	*holder = drm_if;
 	devres_add(master, holder);
-
-	fl2000_reset(usb_dev);
-	fl2000_usb_magic(usb_dev);
 
 	/*
 	 * fbdev emulation, so the console can use the display. Last, because it
