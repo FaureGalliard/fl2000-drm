@@ -21,13 +21,13 @@ got several robustness fixes. `docs/UPSTREAMING.md` (Spanish) is the
 step-by-step submission guide; `scripts/make-upstream-series.sh` turns the
 repo into a patch series against a drm-misc-next checkout.
 
-**None of the upstream-preparation commits, nor the earlier IRQ-starvation
-fix (`082a6a4`), have been run on hardware yet.** They compile cleanly (W=1)
-and pass `checkpatch --strict`. Running the field test on the adapter is the
-immediate next task — see "Open issues". The October 2026 API migration
-(simple pipe → atomic objects, shadow plane + format helpers, fbdev, vblank
-timer, atomic bridge callbacks) changes runtime behavior: test commit by
-commit if something regresses (`git log --oneline 9216213..`).
+**Verified on hardware on 27 Oct 2026** (`integration` branch, commit
+`8f93e98`): the upstream-preparation commits plus the performance work from
+`main` (shadow frame, cursor plane, streaming loads, accepting imported
+buffers). Clean boot, desktop and cursor on the external monitor, no
+`fence fallback`, no `amdgpu bind failed`, 59 sent/s, up to 32 rendered/s
+while dragging, ~9 ms per full-frame conversion, RGB888. If something
+regresses, bisect `git log --oneline 9216213..`.
 
 The race is on: klogg, rhgndf (Jie Feng), Samuv5 and vfox888 all have active
 FL2000 drivers (`docs/COMPARISON.md`). The goal of this fork is to follow the
@@ -129,19 +129,35 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
   would try to bind our client, fail without an OF node, and release our
   devres (use-after-free). Ours is `"fl2000-it66121"`, matched in
   `fl2000_compare()`.
+- **Damage lands in the shadow frame, never in a chain of URB buffers.**
+  `fl2000_stream_compress()` converts only the damaged rectangle into
+  `stream->shadow`, and every outgoing buffer is brought up to date from it
+  (replaying `damage_log`). Converting into whichever URB buffer was free made
+  frame age depend on list membership and lost damage when no buffer was
+  free — that left trails behind a dragged window.
+- **The send path must never wait for a conversion.** `fl2000_stream_build()`
+  uses `mutex_trylock(&shadow_lock)` and otherwise resends — but never a frame
+  older than `newest_sb`, or the picture steps back in time. Blocking there
+  stops URB submission and the monitor blinks.
+- **The cursor is blended on the way out, not into the shadow**, so moving the
+  pointer costs one 64x64 blend. Without a cursor plane of our own the
+  compositor keeps the pointer on the primary GPU's hardware cursor, where it
+  never reaches this output.
+- **Accept imported framebuffers, and read I/O memory with streaming loads.**
+  The compositor hands us the primary GPU's VRAM buffer; `memcpy_fromio()`
+  reads it at ~100 MB/s (~88 ms per 1080p frame), `drm_memcpy_from_wc()`
+  in ~8 ms. Refusing imports instead pushes mutter onto a CPU copy path that
+  leaked ~1.7 GB/min of GTT until the whole desktop stalled. On cached RAM a
+  plain memcpy is faster, so `fl2000_read_span()` chooses per source.
 - **Register fields are `GENMASK()`/`FIELD_PREP()`**, never C bitfields
   (implementation-defined layout; one bitfield union silently read the wrong
   byte for years, see `docs/DEVELOPMENT.md`).
 
 ## Open issues
 
-1. **Field-test the current branch on hardware** (highest priority). It
-   carries the unverified IRQ-starvation fix plus all upstream-preparation
-   commits. Success looks like: everything that worked before still works
-   (EDID, 1920x1080 desktop, clean disconnect), no system-wide lag while the
-   display is active, and `dmesg | grep -i fence` no longer filling with
-   amdgpu fence fallback messages. Only then send the RFC
-   (`docs/UPSTREAMING.md`).
+1. **Finish the field test**: `scripts/fl2000-field-test.sh` log and a clean
+   unplug are still to be confirmed on the current branch. Quick root-free
+   check after a test boot: `scripts/post-boot-check.sh`.
 2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's
    refresh rate (it used to follow every URB completion). The stream itself
    still free-runs, resending the last frame at maximum USB rate; pacing it to
