@@ -542,7 +542,6 @@ static const struct drm_crtc_helper_funcs fl2000_crtc_helper_funcs = {
 
 static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	.atomic_create_state = drm_atomic_helper_crtc_create_state,
-	.destroy = drm_crtc_cleanup,
 	.set_config = drm_atomic_helper_set_config,
 	.page_flip = drm_atomic_helper_page_flip,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
@@ -552,15 +551,6 @@ static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	 * running at the mode's refresh rate.
 	 */
 	DRM_CRTC_VBLANK_TIMER_FUNCS,
-};
-
-/*
- * Encoder: the FL2000 is programmed from the CRTC, the IT66121 bridge hangs
- * off this encoder.
- */
-
-static const struct drm_encoder_funcs fl2000_encoder_funcs = {
-	.destroy = drm_encoder_cleanup,
 };
 
 static void fl2000_drm_if_release(struct device *dev, void *res)
@@ -666,8 +656,8 @@ int fl2000_drm_bind(struct device *master)
 	}
 	drm_plane_helper_add(&drm_if->cursor, &fl2000_cursor_helper_funcs);
 
-	ret = drm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, &drm_if->cursor,
-					&fl2000_crtc_funcs, NULL);
+	ret = drmm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, &drm_if->cursor,
+					 &fl2000_crtc_funcs, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize CRTC (%d)\n", ret);
 		goto err_free_holder;
@@ -676,8 +666,8 @@ int fl2000_drm_bind(struct device *master)
 	drm_if->plane.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 	drm_if->cursor.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 
-	ret = drm_encoder_init(drm, &drm_if->encoder, &fl2000_encoder_funcs,
-			       DRM_MODE_ENCODER_NONE, NULL);
+	/* The FL2000 is programmed from the CRTC; the IT66121 bridge hangs off this encoder */
+	ret = drmm_encoder_init(drm, &drm_if->encoder, NULL, DRM_MODE_ENCODER_NONE, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize encoder (%d)\n", ret);
 		goto err_free_holder;
