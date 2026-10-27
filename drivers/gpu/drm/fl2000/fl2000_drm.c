@@ -4,6 +4,7 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/dma-buf.h>
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
@@ -28,6 +29,11 @@
 #define FL2000_FB_BPP 32
 static const u32 fl2000_pixel_formats[] = {
 	DRM_FORMAT_XRGB8888,
+};
+
+/* The cursor sprite is blended into the outgoing frame by the CPU */
+static const u32 fl2000_cursor_formats[] = {
+	DRM_FORMAT_ARGB8888,
 };
 
 /*
@@ -97,6 +103,11 @@ struct fl2000_drm_if {
 	struct usb_device *usb_dev;
 	struct drm_device drm;
 	struct drm_plane plane;
+	/*
+	 * Without a cursor plane of its own the compositor keeps the pointer on
+	 * the primary GPU's hardware cursor, where it never reaches this output.
+	 */
+	struct drm_plane cursor;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
 	struct fl2000_stream *stream;
@@ -133,8 +144,77 @@ static struct drm_driver fl2000_drm_driver = {
 	.patchlevel = DRM_DRIVER_PATCHLEVEL,
 };
 
+/* What to do with a framebuffer the compositor imported from another GPU */
+enum fl2000_import_policy {
+	FL2000_IMPORT_NEVER = 0,	/* refuse every imported buffer */
+	FL2000_IMPORT_ALWAYS = 1,	/* accept them all */
+	FL2000_IMPORT_SYSTEM = 2,	/* accept only those backed by system RAM */
+};
+
+static int allow_import = FL2000_IMPORT_ALWAYS;
+module_param(allow_import, int, 0644);
+MODULE_PARM_DESC(allow_import,
+		 "Imported framebuffers: 0 refuse, 1 accept (default), 2 accept only system memory");
+
+/*
+ * A compositor driving a secondary GPU hands it the primary GPU's scanout
+ * buffer whenever the secondary accepts it. If that buffer is in VRAM, every
+ * pixel read crosses PCIe; with streaming loads a 1080p frame costs ~8 ms,
+ * without them ~88 ms. Refusing imports instead forces the compositor into a
+ * CPU copy path of its own, which has been seen to leak GTT memory until the
+ * whole desktop stalls, so accepting is the default. The stricter policies stay
+ * selectable at runtime for CPUs without the streaming-load path.
+ */
+static bool fl2000_import_is_system_memory(struct drm_gem_object *obj)
+{
+	struct iosys_map map;
+	bool system;
+
+	if (dma_buf_vmap_unlocked(obj->import_attach->dmabuf, &map))
+		return false;
+
+	system = !map.is_iomem;
+	dma_buf_vunmap_unlocked(obj->import_attach->dmabuf, &map);
+
+	return system;
+}
+
+static struct drm_framebuffer *fl2000_fb_create(struct drm_device *drm, struct drm_file *file,
+						const struct drm_format_info *info,
+						const struct drm_mode_fb_cmd2 *mode_cmd)
+{
+	struct drm_gem_object *obj;
+	bool reject = false;
+
+	obj = drm_gem_object_lookup(file, mode_cmd->handles[0]);
+	if (!obj)
+		return ERR_PTR(-ENOENT);
+
+	if (obj->import_attach) {
+		switch (READ_ONCE(allow_import)) {
+		case FL2000_IMPORT_ALWAYS:
+			break;
+		case FL2000_IMPORT_SYSTEM:
+			reject = !fl2000_import_is_system_memory(obj);
+			break;
+		default:
+			reject = true;
+			break;
+		}
+	}
+
+	drm_gem_object_put(obj);
+
+	if (reject) {
+		drm_dbg_kms(drm, "Rejecting imported framebuffer\n");
+		return ERR_PTR(-EINVAL);
+	}
+
+	return drm_gem_fb_create_with_dirty(drm, file, info, mode_cmd);
+}
+
 static const struct drm_mode_config_funcs fl2000_mode_config_funcs = {
-	.fb_create = drm_gem_fb_create_with_dirty,
+	.fb_create = fl2000_fb_create,
 	.atomic_check = drm_atomic_helper_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
@@ -292,19 +372,26 @@ static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *new_crtc_state = NULL;
+	bool is_cursor = plane->type == DRM_PLANE_TYPE_CURSOR;
+
+	/* Clipping a larger sprite would put a truncated pointer on screen */
+	if (is_cursor && new_plane_state->fb &&
+	    (new_plane_state->fb->width > FL2000_CURSOR_MAX ||
+	     new_plane_state->fb->height > FL2000_CURSOR_MAX))
+		return -EINVAL;
 
 	if (new_plane_state->crtc)
 		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
+	/* The cursor may be placed anywhere; the primary plane is the frame */
 	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
 						   DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
-						   false, false);
+						   is_cursor, false);
 }
 
 /*
- * The whole visible frame is converted on every update with damage: the
- * stream rotates through several buffers, so a partial update would need a
- * persistent copy of the frame to patch.
+ * Only the damaged rectangle is converted, into the stream's shadow frame,
+ * which is the one persistent copy every outgoing buffer is built from.
  */
 static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
 {
@@ -313,28 +400,91 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
 	struct drm_framebuffer *fb = plane_state->fb;
-	struct drm_rect damage, clip;
+	struct drm_rect damage;
+	ktime_t start;
 	int idx;
 
 	if (!fb)
 		return; /* plane is disabled */
 
-	if (!drm_atomic_helper_damage_merged(old_plane_state, plane_state, &damage))
+	if (fl2000_stream_full_frame())
+		damage = (struct drm_rect){ 0, 0, fb->width, fb->height };
+	else if (!drm_atomic_helper_damage_merged(old_plane_state, plane_state, &damage))
 		return;
 
 	if (drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE))
 		return;
 
 	if (drm_dev_enter(plane->dev, &idx)) {
-		/* The plane covers the whole CRTC (no scaling or positioning) */
-		drm_rect_fp_to_int(&clip, &plane_state->src);
-		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0], fb, &clip,
-				       &shadow_plane_state->fmtcnv_state);
+		start = ktime_get();
+		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0], fb->width,
+				       fb->height, fb->pitches[0], &damage);
+		fl2000_stream_note_render(drm_if->stream,
+					  (unsigned int)ktime_us_delta(ktime_get(), start),
+					  drm_rect_width(&damage) * drm_rect_height(&damage));
 		drm_dev_exit(idx);
 	}
 
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 }
+
+/*
+ * Hand the cursor sprite to the stream, which blends it into every outgoing
+ * frame. Moving the pointer keeps the same framebuffer and skips the copy.
+ */
+static void fl2000_cursor_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
+{
+	struct drm_plane_state *old_plane_state = drm_atomic_get_old_plane_state(state, plane);
+	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
+	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
+	struct drm_framebuffer *fb = plane_state->fb;
+	unsigned int w, h;
+	u32 *sprite;
+	int idx;
+
+	if (!fb || !plane_state->visible) {
+		fl2000_stream_set_cursor(drm_if->stream, NULL, 0, 0, 0, 0);
+		return;
+	}
+
+	if (fb == old_plane_state->fb && old_plane_state->visible) {
+		fl2000_stream_move_cursor(drm_if->stream, plane_state->crtc_x, plane_state->crtc_y);
+		return;
+	}
+
+	/* Size is bounded by the atomic check */
+	w = fb->width;
+	h = fb->height;
+
+	/* Repack into a tightly packed sprite: the framebuffer has its own pitch */
+	sprite = kmalloc_array((size_t)w * h, sizeof(u32), GFP_KERNEL);
+	if (!sprite)
+		return;
+
+	if (drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE))
+		goto out_free;
+
+	if (drm_dev_enter(plane->dev, &idx)) {
+		for (unsigned int y = 0; y < h; y++)
+			iosys_map_memcpy_from(sprite + (size_t)y * w, &shadow_plane_state->data[0],
+					      (size_t)y * fb->pitches[0], (size_t)w * sizeof(u32));
+
+		fl2000_stream_set_cursor(drm_if->stream, sprite, w, h, plane_state->crtc_x,
+					 plane_state->crtc_y);
+		drm_dev_exit(idx);
+	}
+
+	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
+out_free:
+	kfree(sprite);
+}
+
+static const struct drm_plane_helper_funcs fl2000_cursor_helper_funcs = {
+	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
+	.atomic_check = fl2000_plane_atomic_check,
+	.atomic_update = fl2000_cursor_atomic_update,
+};
 
 static const struct drm_plane_helper_funcs fl2000_plane_helper_funcs = {
 	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
@@ -432,7 +582,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 
 	fl2000_afe_magic(usb_dev);
 
-	fl2000_stream_mode_set(drm_if->stream, mode->hdisplay * mode->vdisplay, bytes_pix);
+	fl2000_stream_mode_set(drm_if->stream, mode->hdisplay, mode->vdisplay, bytes_pix);
 }
 
 static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
@@ -560,6 +710,9 @@ int fl2000_drm_bind(struct device *master)
 	mode_config->max_width = FL2000_MAX_WIDTH;
 	mode_config->min_height = 1;
 	mode_config->max_height = FL2000_MAX_HEIGHT;
+	/* Userspace sizes its sprite to this; a larger one is rejected */
+	mode_config->cursor_width = FL2000_CURSOR_MAX;
+	mode_config->cursor_height = FL2000_CURSOR_MAX;
 
 	ret = drm_universal_plane_init(drm, &drm_if->plane, 0, &fl2000_plane_funcs,
 				       fl2000_pixel_formats, ARRAY_SIZE(fl2000_pixel_formats),
@@ -576,13 +729,24 @@ int fl2000_drm_bind(struct device *master)
 	 */
 	drm_plane_enable_fb_damage_clips(&drm_if->plane);
 
-	ret = drm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, NULL,
+	ret = drm_universal_plane_init(drm, &drm_if->cursor, 0, &fl2000_plane_funcs,
+				       fl2000_cursor_formats, ARRAY_SIZE(fl2000_cursor_formats),
+				       fl2000_plane_format_modifiers, DRM_PLANE_TYPE_CURSOR, NULL);
+	if (ret) {
+		drm_err(drm, "Cannot initialize cursor plane (%d)\n", ret);
+		goto err_free_holder;
+	}
+	drm_plane_helper_add(&drm_if->cursor, &fl2000_cursor_helper_funcs);
+
+	ret = drm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, &drm_if->cursor,
 					&fl2000_crtc_funcs, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize CRTC (%d)\n", ret);
 		goto err_free_holder;
 	}
 	drm_crtc_helper_add(&drm_if->crtc, &fl2000_crtc_helper_funcs);
+	drm_if->plane.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
+	drm_if->cursor.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 
 	ret = drm_encoder_init(drm, &drm_if->encoder, &fl2000_encoder_funcs,
 			       DRM_MODE_ENCODER_NONE, NULL);

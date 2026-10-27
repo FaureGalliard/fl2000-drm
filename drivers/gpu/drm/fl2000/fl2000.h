@@ -112,13 +112,23 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev);
 void fl2000_stream_destroy(struct usb_device *usb_dev);
 
 /* Streaming interface */
-int fl2000_stream_mode_set(struct fl2000_stream *stream, int pixels, u32 bytes_pix);
-struct drm_format_conv_state;
+int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
+			   unsigned int height, u32 bytes_pix);
 struct drm_rect;
 struct iosys_map;
 void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
-			    const struct drm_framebuffer *fb, const struct drm_rect *clip,
-			    struct drm_format_conv_state *fmtcnv_state);
+			    unsigned int width, unsigned int height, unsigned int pitch,
+			    const struct drm_rect *clip);
+void fl2000_stream_note_render(struct fl2000_stream *stream, unsigned int conv_us,
+			       unsigned int damage_px);
+bool fl2000_stream_full_frame(void);
+
+/* Largest cursor sprite the blend path accepts, advertised to userspace */
+#define FL2000_CURSOR_MAX 64
+
+void fl2000_stream_set_cursor(struct fl2000_stream *stream, const u32 *argb, unsigned int w,
+			      unsigned int h, int x, int y);
+void fl2000_stream_move_cursor(struct fl2000_stream *stream, int x, int y);
 int fl2000_stream_enable(struct fl2000_stream *stream);
 void fl2000_stream_disable(struct fl2000_stream *stream);
 
