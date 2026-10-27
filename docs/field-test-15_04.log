@@ -1,0 +1,197 @@
+fl2000 field test - Tue Oct 27 03:04:59 PM -05 2026
+kernel: 7.1.8-arch1-3
+
+=== quirk usb-storage (debe contener 1d5c:2000:i) ===
+1d5c:2000:i
+
+
+=== modulo fl2000 ===
+fl2000                 81920  4
+
+=== adaptador USB ===
+Bus 002 Device 004: ID 1d5c:2000 Fresco Logic FL2000/FL2000DX VGA/DVI/HDMI Adapter
+
+=== esperando tarjeta DRM del fl2000 (max 90s) ===
+tarjeta DRM presente (tras 2s)
+
+=== estado /sys/class/drm ===
+card1
+card1-eDP-1
+card1-HDMI-A-1
+card2
+card2-HDMI-A-3
+renderD128
+version
+/sys/class/drm/card1-eDP-1/status: connected
+/sys/class/drm/card1-HDMI-A-1/status: connected
+/sys/class/drm/card2-HDMI-A-3/status: connected
+
+=== conectores y modos (modetest -c) ===
+opened device `Fresco Logic FL2000 USB display` on driver `fl2000` (version 0.0.1 at 0)
+Connectors:
+id	encoder	status		name		size (mm)	modes	encoders
+41	0	connected	HDMI-A-3       	0x0		5	40
+  modes:
+	index name refresh (Hz) hdisp hss hse htot vdisp vss vse vtot
+  #0 1024x768 60.00 1024 1048 1184 1344 768 771 777 806 65000 flags: nhsync, nvsync; type: driver
+  #1 800x600 60.32 800 840 968 1056 600 601 605 628 40000 flags: phsync, pvsync; type: driver
+  #2 800x600 56.25 800 824 896 1024 600 601 603 625 36000 flags: phsync, pvsync; type: driver
+  #3 848x480 60.00 848 864 976 1088 480 486 494 517 33750 flags: phsync, pvsync; type: driver
+  #4 640x480 59.94 640 656 752 800 480 490 492 525 25175 flags: nhsync, nvsync; type: driver
+  props:
+	1 EDID:
+		flags: immutable blob
+		blobs:
+
+		value:
+	2 DPMS:
+		flags: enum
+		enums: On=0 Standby=1 Suspend=2 Off=3
+		value: 0
+	5 link-status:
+		flags: enum
+		enums: Good=0 Bad=1
+		value: 0
+	7 non-desktop:
+		flags: immutable range
+		values: 0 1
+		value: 0
+	4 TILE:
+		flags: immutable blob
+		blobs:
+
+		value:
+
+
+=== EDID decodificado (si hay edid-decode) ===
+/sys/class/drm/card*-HDMI-A-2/edid vacio o inexistente
+
+=== PRUEBA DE MODESET: patron de colores 15s en conector 41 modo 1024x768 ===
+>>> MIRA EL MONITOR LG AHORA - deberian verse barras de colores <<<
+opened device `Fresco Logic FL2000 USB display` on driver `fl2000` (version 0.0.1 at 0)
+setting mode 1024x768-60.00Hz on connectors 41, crtc 39
+(anota si se vio el patron y compartelo junto con este log)
+
+=== dmesg (ultimas 120 lineas) ===
+[   11.128964] input: HD-Audio Generic Headphone as /devices/pci0000:00/0000:00:08.1/0000:04:00.6/sound/card1/input25
+[   11.152550] Bluetooth: hci0: RTL: fw version 0x75b8f098
+[   11.297130] Bluetooth: MGMT ver 1.23
+[   11.315910] NET: Registered PF_ALG protocol family
+[   11.322292] ACPI BIOS Error (bug): AE_AML_BUFFER_LIMIT, Index (0x000000032) is beyond end of object (length 0x32) (20251212/exoparg2-393)
+[   11.322310] ACPI Error: Aborting method \_SB.WMID.WQBE due to previous error (AE_AML_BUFFER_LIMIT) (20251212/psparse-529)
+[   11.323366] ACPI BIOS Error (bug): AE_AML_BUFFER_LIMIT, Field [D008] at bit offset/length 128/8 exceeds size of target Buffer (128 bits) (20251212/dsopcode-198)
+[   11.323379] ACPI Error: Aborting method \HWMC due to previous error (AE_AML_BUFFER_LIMIT) (20251212/psparse-529)
+[   11.323392] ACPI Error: Aborting method \_SB.WMID.WMAA due to previous error (AE_AML_BUFFER_LIMIT) (20251212/psparse-529)
+[   11.323404] hp_bioscfg: Returned error 0x300a, "Generic/Other error"
+[   11.561982] i2c 6-004c: DDC not done (-110), status 0x4A
+[   11.710738] i2c 6-004c: EDID block 0 read failed (-110)
+[   11.710751] i2c 6-004c: EDID FIFO read failed, trying direct DDC read
+[   12.382737] i2c 6-004c: EDID read ok, monitor is HDMI
+[   12.471783] [drm] Initialized fl2000 0.0.1 for 2-3 on minor 0
+[   12.570863] fbcon: Deferring console take-over
+[   12.570871] usb 2-3: [drm] fb1: fl2000drmfb frame buffer device
+[   12.570937] usbcore: registered new interface driver fl2000
+[   12.570912] snd_hda_intel 0000:04:00.1: bound 0000:04:00.0 (ops amdgpu_dm_audio_component_bind_ops [amdgpu])
+[   12.577442] input: HD-Audio Generic HDMI/DP,pcm=3 as /devices/pci0000:00/0000:00:08.1/0000:04:00.1/sound/card0/input26
+[   14.603421] rfkill: input handler disabled
+[   15.829209] Bluetooth: RFCOMM TTY layer initialized
+[   15.829222] Bluetooth: RFCOMM socket layer initialized
+[   15.829233] Bluetooth: RFCOMM ver 1.11
+[   16.837468] wlan0: authenticate with 84:78:48:fe:fa:82 (local address=e8:6f:38:14:d9:b7)
+[   16.879407] wlan0: send auth to 84:78:48:fe:fa:82 (try 1/3)
+[   16.916094] wlan0: authenticate with 84:78:48:fe:fa:82 (local address=e8:6f:38:14:d9:b7)
+[   16.916148] wlan0: send auth to 84:78:48:fe:fa:82 (try 1/3)
+[   16.928508] wlan0: authenticated
+[   16.930398] wlan0: associate with 84:78:48:fe:fa:82 (try 1/3)
+[   16.946784] wlan0: RX AssocResp from 84:78:48:fe:fa:82 (capab=0x1111 status=0 aid=3)
+[   16.947122] wlan0: associated
+[   16.990487] wlan0: Limiting TX power to 24 (24 - 0) dBm as advertised by 84:78:48:fe:fa:82
+[   20.075916] rfkill: input handler enabled
+[   20.504768] logitech-hidpp-device 0003:046D:4054.0003: HID++ 4.5 device connected.
+[   20.572688] usb 2-3: Stream: 59 sent/s, 4 rendered/s, 355 MB/s, 21 stalled, conv 9314 us (max 13251) over 2073600 px
+[   22.401044] rfkill: input handler disabled
+[   22.570451] block nvme0n1: No UUID available providing old NGUID
+[   25.578208] usb 2-3: Stream: 59 sent/s, 2 rendered/s, 355 MB/s, 10 stalled, conv 9195 us (max 15022) over 1857416 px
+[   30.583701] usb 2-3: Stream: 59 sent/s, 2 rendered/s, 355 MB/s, 12 stalled, conv 8326 us (max 12926) over 1837698 px
+[   35.589230] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   40.594735] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 8743 us (max 10560) over 2073600 px
+[   45.600217] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 4812 us (max 9610) over 1037465 px
+[   50.605713] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   55.611228] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   60.616737] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   65.622246] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   70.627792] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   75.633844] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   80.639043] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   85.644887] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   90.650296] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   95.655867] usb 2-3: Stream: 59 sent/s, 0 rendered/s, 355 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[   97.925744] usb 1-3: USB disconnect, device number 3
+[   97.925761] usb 1-3.2: USB disconnect, device number 6
+[   97.947184] usb 2-3: USB disconnect, device number 3
+[   97.951663] i2c i2c-6: Unbinding FL2000 master
+[   97.952561] usb 2-3: Data URB error -19
+[   97.965667] i2c 6-004c: Unbinding IT66121 component
+[   97.969073] usb 2-3: Stopping interrupts
+[   97.977091] usb 2-3: Destroying IT66121 bridge
+[  131.325050] usb 2-3: new SuperSpeed USB device number 4 using xhci_hcd
+[  131.336251] usb 2-3: config 1 interface 1 altsetting 0 has a duplicate endpoint with address 0x81, skipping
+[  131.336275] usb 2-3: config 1 interface 1 altsetting 0 has a duplicate endpoint with address 0x1, skipping
+[  131.336285] usb 2-3: config 1 interface 1 altsetting 1 has a duplicate endpoint with address 0x81, skipping
+[  131.336294] usb 2-3: config 1 interface 1 altsetting 1 has a duplicate endpoint with address 0x1, skipping
+[  131.336303] usb 2-3: config 1 interface 1 altsetting 2 has a duplicate endpoint with address 0x81, skipping
+[  131.336311] usb 2-3: config 1 interface 1 altsetting 2 has a duplicate endpoint with address 0x1, skipping
+[  131.336320] usb 2-3: config 1 interface 1 altsetting 3 has a duplicate endpoint with address 0x81, skipping
+[  131.336327] usb 2-3: config 1 interface 1 altsetting 3 has a duplicate endpoint with address 0x1, skipping
+[  131.336335] usb 2-3: config 1 interface 1 altsetting 4 has a duplicate endpoint with address 0x81, skipping
+[  131.336342] usb 2-3: config 1 interface 1 altsetting 4 has a duplicate endpoint with address 0x1, skipping
+[  131.336350] usb 2-3: config 1 interface 1 altsetting 5 has a duplicate endpoint with address 0x81, skipping
+[  131.336386] usb 2-3: config 1 interface 1 altsetting 5 has a duplicate endpoint with address 0x1, skipping
+[  131.336395] usb 2-3: config 1 interface 1 altsetting 6 has a duplicate endpoint with address 0x81, skipping
+[  131.336403] usb 2-3: config 1 interface 1 altsetting 6 has a duplicate endpoint with address 0x1, skipping
+[  131.336415] usb 2-3: New USB device found, idVendor=1d5c, idProduct=2000, bcdDevice= 2.00
+[  131.336428] usb 2-3: New USB device strings: Mfr=0, Product=0, SerialNumber=0
+[  131.342899] usb 2-3: Created FL2000 bridge I2C bus 6 at interface usb-0000:04:00.3-3
+[  131.342916] i2c i2c-6: Detecting IT66121 at address 0x4C on FL2000 bridge I2C bus
+[  131.342926] i2c i2c-6: Adapter does not support I2C functions properly
+[  131.343683] i2c i2c-6: Binding FL2000 master
+[  131.344314] i2c 6-004c: Binding IT66121 component
+[  131.483404] usb 1-3: new high-speed USB device number 7 using xhci_hcd
+[  131.608166] usb 1-3: New USB device found, idVendor=1a40, idProduct=0101, bcdDevice= 1.00
+[  131.608181] usb 1-3: New USB device strings: Mfr=0, Product=1, SerialNumber=0
+[  131.608190] usb 1-3: Product: USB2.0 HUB
+[  131.662633] hub 1-3:1.0: USB hub found
+[  131.662928] hub 1-3:1.0: 4 ports detected
+[  131.846949] i2c i2c-6: bound 6-004c (ops it66121_component_ops [fl2000])
+[  132.720977] i2c 6-004c: DDC not done (-110), status 0x4A
+[  132.884722] i2c 6-004c: EDID block 0 read failed (-110)
+[  132.884735] i2c 6-004c: EDID FIFO read failed, trying direct DDC read
+[  133.556994] i2c 6-004c: EDID read ok, monitor is HDMI
+[  133.662534] [drm] Initialized fl2000 0.0.1 for 2-3 on minor 2
+[  133.757285] fbcon: Deferring console take-over
+[  133.757293] usb 2-3: [drm] fb1: fl2000drmfb frame buffer device
+[  133.757454] usb-storage 2-3:1.3: USB Mass Storage device detected
+[  133.757707] usb-storage 2-3:1.3: device ignored
+[  134.132652] usb 1-3.2: new full-speed USB device number 8 using xhci_hcd
+[  134.328560] usb 1-3.2: New USB device found, idVendor=0d8c, idProduct=0012, bcdDevice= 1.00
+[  134.328576] usb 1-3.2: New USB device strings: Mfr=1, Product=2, SerialNumber=0
+[  134.328585] usb 1-3.2: Product: USB Audio Device
+[  134.328593] usb 1-3.2: Manufacturer: C-Media Electronics Inc.
+[  134.514379] usb 1-3.2: applying playback min mute quirk
+[  134.555914] usb 1-3.2: applying playback min mute quirk
+[  134.558541] usb 1-3.2: applying playback min mute quirk
+[  134.601380] usb 1-3.2: applying playback min mute quirk
+[  134.652910] input: C-Media Electronics Inc. USB Audio Device as /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb1/1-3/1-3.2/1-3.2:1.3/0003:0D8C:0012.0005/input/input27
+[  134.704271] hid-generic 0003:0D8C:0012.0005: input,hidraw2: USB HID v1.00 Device [C-Media Electronics Inc. USB Audio Device] on usb-0000:04:00.3-3.2/input3
+[  252.530226] synth uevent: /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2: incorrect uevent action arguments
+[  252.530241] drm card2: uevent: failed to send synthetic uevent: -22
+[  281.293714] synth uevent: /devices/pci0000:00/0000:00:08.1/0000:04:00.0/drm/card1: incorrect uevent action arguments
+[  281.293725] drm card1: uevent: failed to send synthetic uevent: -22
+[  480.704547] warning: `ThreadPoolForeg' uses wireless extensions which will stop working for Wi-Fi 7 hardware; use nl80211
+[  794.648308] rfkill: input handler enabled
+[  794.708885] fbcon: Taking over console
+[  794.719617] Console: switching to colour frame buffer device 240x67
+[  886.718586] usb 2-3: Stream: 60 sent/s, 0 rendered/s, 135 MB/s, 0 stalled, conv 1453 us (max 1453) over 786432 px
+[  891.735235] usb 2-3: Stream: 60 sent/s, 0 rendered/s, 135 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+
+Listo. Log guardado en docs/field-test-15_04.log - haz commit y push para compartirlo.
