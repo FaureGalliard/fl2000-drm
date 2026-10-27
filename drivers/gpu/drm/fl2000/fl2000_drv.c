@@ -260,3 +260,4 @@ module_usb_driver(fl2000_driver);
 MODULE_AUTHOR("Artem Mygaiev");
 MODULE_DESCRIPTION("FL2000 USB display driver");
 MODULE_LICENSE("GPL");
+MODULE_IMPORT_NS("DMA_BUF");
