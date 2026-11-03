@@ -40,6 +40,8 @@ struct it66121_priv {
 	struct mutex ddc_lock;
 	/* The EDID is read through the FL2000 bus, not the IT66121 FIFO, on this board */
 	bool edid_direct;
+	/* Set when the monitor went away: the cached EDID is no longer valid */
+	bool edid_stale;
 
 	struct regmap_field *irq_pending;
 	struct regmap_field *hpd;
@@ -288,6 +290,10 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
 		priv->conn_status = val ? connector_status_connected :
 					  connector_status_disconnected;
 	}
+
+	/* Whatever comes next may be another monitor: its EDID must be read again */
+	if (priv->conn_status != connector_status_connected)
+		WRITE_ONCE(priv->edid_stale, true);
 }
 
 /*
@@ -457,18 +463,10 @@ static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int bl
 	return 0;
 }
 
-static int it66121_connector_get_modes(struct drm_connector *connector)
+static void it66121_read_edid(struct it66121_priv *priv, struct drm_connector *connector)
 {
-	struct it66121_priv *priv = container_of(connector, struct it66121_priv, connector);
 	int (*first)(void *context, u8 *buf, unsigned int block, size_t len);
 	int (*second)(void *context, u8 *buf, unsigned int block, size_t len);
-
-	/*
-	 * Read the EDID on every probe: the DRM core drops it from the
-	 * connector when the monitor goes away, and a different monitor may be
-	 * plugged in next.
-	 */
-	drm_edid_free(priv->drm_edid);
 
 	/*
 	 * Board wirings differ: try the direct FL2000-bus DDC read if the
@@ -483,14 +481,30 @@ static int it66121_connector_get_modes(struct drm_connector *connector)
 		second = it66121_get_edid_block_direct;
 	}
 
+	drm_edid_free(priv->drm_edid);
 	priv->drm_edid = drm_edid_read_custom(connector, first, priv);
-	if (priv->drm_edid) {
-		dev_dbg(&priv->client->dev, "EDID read ok\n");
-	} else {
+	if (!priv->drm_edid) {
 		dev_dbg(&priv->client->dev, "EDID read failed, trying the other DDC path\n");
 		priv->drm_edid = drm_edid_read_custom(connector, second, priv);
 		if (priv->drm_edid)
 			priv->edid_direct = !priv->edid_direct;
+	}
+}
+
+static int it66121_connector_get_modes(struct drm_connector *connector)
+{
+	struct it66121_priv *priv = container_of(connector, struct it66121_priv, connector);
+
+	/*
+	 * Reading the EDID takes about a second over USB and every probe from
+	 * userspace gets here with the mode config locked, so keep it until
+	 * the monitor goes away. It must still be handed to the connector on
+	 * every probe: the DRM core drops it when the connector goes through
+	 * 'disconnected'.
+	 */
+	if (!priv->drm_edid || READ_ONCE(priv->edid_stale)) {
+		WRITE_ONCE(priv->edid_stale, false);
+		it66121_read_edid(priv, connector);
 	}
 
 	drm_edid_connector_update(connector, priv->drm_edid);

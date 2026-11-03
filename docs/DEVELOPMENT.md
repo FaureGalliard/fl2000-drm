@@ -75,6 +75,7 @@ found. All are fixed.
 | Hard kernel hang on disconnect | `it66121_destroy()` → `component_del()` called from the master unbind callback, which already holds the global component mutex → self-deadlock |
 | Machine hangs when the adapter is unplugged while streaming | A data URB whose submission failed (`-ENODEV`) was freed while still on the stream's anchor; `usb_kill_anchored_urbs()` then spun forever on the dangling entry. Fixed with `usb_unanchor_urb()` |
 | After an unplug the dongle never enumerates again (`usb_hub_wq` stuck in `i2c_del_adapter()`) | The DRM device was a child of the I2C adapter and so held a reference on it, while `i2c_del_adapter()` waits for all references. The DRM device is now a child of the USB device and `drm_dev_put()` is explicit in `fl2000_drm_if_release()` |
+| After a monitor/cable cycle the connector only offers modes up to 1024x768 and an empty EDID | The EDID was cached in the bridge and only handed to the connector the first time; the DRM core drops it when the connector goes through `disconnected`. It is now read on every probe, starting with the DDC path that worked last time |
 | Display torn down ~30 s after every plug | SCSI timeout on the virtual CD → `usb_reset_device()` on the whole dongle |
 | Driver never re-binds after a USB reset | Probe bailed out with `-ENODEV` because the bridge had been destroyed on disconnect while `devs` survived |
 | `modprobe` appears to freeze the terminal | Probe runs synchronously in modprobe context while the device is stuck in the reset cycle; not a driver hang. Load the module with the adapter unplugged, then plug it (probe runs in a udev worker) |
@@ -107,6 +108,44 @@ The FL2000 register helpers can be unit-tested this way: compile
 logging `regmap_write()`/`regmap_write_bits()`/`regmap_read()` and the
 `BIT`/`GENMASK`/`FIELD_PREP` macros, then diff the logs of two versions.
 
+## Unplug and replug (27 October 2026)
+
+State on the `integration` branch after the work of that day:
+
+- **Unplug is clean.** Two kernel-side hangs were fixed (the failed-submit URB
+  left on the anchor, and the DRM device parented to the I2C adapter; see the
+  bug table). `usb_hub_wq` no longer blocks, the dongle re-enumerates, rebinds,
+  reads the EDID and streams again.
+- **The driver works after a replug on its own.** From a TTY,
+  `scripts/fl2000-field-test.sh` showed the colour bars on the monitor after an
+  unplug/replug cycle (`field-test-15_04.log`). The kernel `udev` events are the
+  expected ones (`field-udev-replug-14_41.log`: remove of the connector and card,
+  then add of the new card and connector, `change HOTPLUG=1`).
+- **Open: GNOME/Mutter 50.4 does not pick the output up** when the dongle
+  appears with the session open. The log says `Added device '/dev/dri/cardN'
+  (fl2000)` and `Created gbm renderer`, but `GetCurrentState` and
+  `GetResources` list only amdgpu. Loading `vkms` once made the monitor appear
+  (`modprobe vkms`, query, `modprobe -r vkms`); a second replug with the same
+  node name has crashed gnome-shell (SIGSEGV in
+  `meta_monitor_config_manager_assign`, after `Failed to hotplug secondary gpu
+  ... device already present`). The saved monitor layout gets rearranged as a
+  side effect. Reading Mutter's `add_drm_device()` shows no monitor-manager
+  reload after a GPU is added; the `gpu-added` handler was not read. Workaround:
+  plug the dongle in before logging in, or log out and in.
+
+Tried without effect on the Mutter side (do not retry): probing the connector
+before `drm_dev_register()`; synthetic `HOTPLUG=1` uevents on the dongle and on
+amdgpu (`echo "change <UUID> HOTPLUG=1" > /sys/class/drm/cardN/uevent`: the
+kernel requires the UUID before any `KEY=VALUE`); forcing a real state change
+with `echo off` / `echo detect` on the connector `status`; comparing `udev` tags
+and `logind` seat membership (identical to amdgpu). Next steps if it is picked up
+again: run Mutter with `MUTTER_DEBUG=kms` from login, read its `gpu-added`
+handler, and report it upstream with the trace.
+
+klogg/fl2000_drm has no issue about this. Its issue #12 (kernel crash on
+removal) was validated with QEMU USB passthrough, without a compositor, and a
+commenter there describes the same DRM-parent/`i2c_del_adapter()` deadlock.
+
 ## Rejected theories
 
 - *"Kernel 7.x broke the DRM API broadly."* It did not. Almost everything the
@@ -116,6 +155,9 @@ logging `regmap_write()`/`regmap_write_bits()`/`regmap_read()` and the
   and were replaced or are listed as upstream review items anyway.)
 - *"The hardware or the monitor is faulty."* The same adapter and monitor work
   under Windows; every failure was driver-side.
+- *"After a replug the driver, not the compositor, fails to bring the output up."*
+  It does not: the TTY test shows the picture. What is missing is Mutter
+  adding the hot-plugged GPU's outputs to its monitor list.
 - *"The EDID FIFO path just needs better timing."* It never completes on this
   board regardless of timing; the wiring is different (see Hardware map).
 

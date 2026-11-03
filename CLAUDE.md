@@ -95,9 +95,9 @@ upstream requires quiet drivers. To see them, boot with
 (and `drm.debug=0x04` on the kernel command line for the DRM ones).
 
 **Boot with the adapter already connected and the monitor powered on.** Hot
-replug frequently fails: only the dongle's USB2 half re-enumerates and the
-FL2000's SuperSpeed function never returns to the bus. If you must replug,
-leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
+replug now re-enumerates and rebinds (a blocked `usb_hub_wq` used to prevent
+that), but GNOME does not show the new output until the next login. Leave the
+dongle unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
 
 ## Non-obvious invariants — breaking these has caused real crashes
 
@@ -164,8 +164,13 @@ leave it unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
 
 ## Open issues
 
-1. **Finish the field test**: `scripts/fl2000-field-test.sh` log and a clean
-   unplug are still to be confirmed on the current branch. Quick root-free
+1. **Hot replug under GNOME.** Unplug and replug are clean in the kernel and
+   the colour-bar test works afterwards (`docs/field-test-15_04.log`), but
+   Mutter 50.4 does not add the output when the dongle appears with the session
+   open, and a second replug has crashed gnome-shell. Not fixable from the
+   driver so far; findings and what not to retry are in `docs/DEVELOPMENT.md`,
+   "Unplug and replug". Plug the dongle in before login. The full field test on
+   a clean boot is still to be repeated on the current branch. Quick root-free
    check after a test boot: `scripts/post-boot-check.sh`.
 2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's
    refresh rate (it used to follow every URB completion). The stream itself

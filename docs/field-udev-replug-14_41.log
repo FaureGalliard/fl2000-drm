@@ -1,0 +1,355 @@
+nohup: ignoring input
+monitor will print the received events for:
+UDEV - the event which udev sends out after rule processing
+KERNEL - the kernel uevent
+
+KERNEL[828.567340] remove   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2/card2-HDMI-A-3 (drm)
+ACTION=remove
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2/card2-HDMI-A-3
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4680
+
+UDEV  [828.569578] remove   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2/card2-HDMI-A-3 (drm)
+ACTION=remove
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2/card2-HDMI-A-3
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4680
+USEC_INITIALIZED=394497749
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+TAGS=:master-of-seat:seat:
+CURRENT_TAGS=:master-of-seat:seat:
+
+KERNEL[828.570779] remove   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2 (drm)
+ACTION=remove
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card2
+DEVTYPE=drm_minor
+SEQNUM=4681
+MAJOR=226
+MINOR=2
+
+UDEV  [828.572755] remove   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2 (drm)
+ACTION=remove
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card2
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card2
+DEVTYPE=drm_minor
+SEQNUM=4681
+USEC_INITIALIZED=394497448
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+MAJOR=226
+MINOR=2
+DEVLINKS=/dev/dri/by-path/pci-0000:04:00.3-usb-0:3-card /dev/dri/by-path/pci-0000:04:00.3-usbv3-0:3-card
+TAGS=:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:uaccess:master-of-seat:seat:
+
+KERNEL[865.598391] add      /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=add
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4711
+MAJOR=226
+MINOR=0
+
+KERNEL[865.598640] add      /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0/card0-HDMI-A-2 (drm)
+ACTION=add
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0/card0-HDMI-A-2
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4712
+
+KERNEL[865.598798] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=41
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4713
+MAJOR=226
+MINOR=0
+
+UDEV  [865.603051] add      /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=add
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4711
+USEC_INITIALIZED=865598391
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+MAJOR=226
+MINOR=0
+DEVLINKS=/dev/dri/by-path/pci-0000:04:00.3-usb-0:3-card /dev/dri/by-path/pci-0000:04:00.3-usbv3-0:3-card
+TAGS=:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:uaccess:master-of-seat:seat:
+
+UDEV  [865.606240] add      /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0/card0-HDMI-A-2 (drm)
+ACTION=add
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0/card0-HDMI-A-2
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4712
+USEC_INITIALIZED=865598667
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+TAGS=:master-of-seat:seat:
+CURRENT_TAGS=:master-of-seat:seat:
+
+UDEV  [865.610388] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=41
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4713
+USEC_INITIALIZED=865598391
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+MAJOR=226
+MINOR=0
+DEVLINKS=/dev/dri/by-path/pci-0000:04:00.3-usb-0:3-card /dev/dri/by-path/pci-0000:04:00.3-usbv3-0:3-card
+TAGS=:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:uaccess:master-of-seat:seat:
+
+KERNEL[867.617665] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+HOTPLUG=1
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4722
+MAJOR=226
+MINOR=0
+
+UDEV  [867.623165] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+HOTPLUG=1
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4722
+USEC_INITIALIZED=865598391
+ID_PATH_WITH_USB_REVISION=pci-0000:04:00.3-usbv3-0:3
+ID_PATH=pci-0000:04:00.3-usb-0:3
+ID_PATH_TAG=pci-0000_04_00_3-usb-0_3
+ID_FOR_SEAT=drm-pci-0000_04_00_3-usb-0_3
+MAJOR=226
+MINOR=0
+DEVLINKS=/dev/dri/by-path/pci-0000:04:00.3-usb-0:3-card /dev/dri/by-path/pci-0000:04:00.3-usbv3-0:3-card
+TAGS=:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:uaccess:master-of-seat:seat:
+
+KERNEL[1100.926656] add      /devices/faux/vkms/drm/card3 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4746
+MAJOR=226
+MINOR=3
+
+KERNEL[1100.927099] add      /devices/faux/vkms/drm/card3/card3-Writeback-1 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Writeback-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4747
+
+KERNEL[1100.927475] change   /devices/faux/vkms/drm/card3 (drm)
+ACTION=change
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=47
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4748
+MAJOR=226
+MINOR=3
+
+KERNEL[1100.927919] add      /devices/faux/vkms/drm/card3/card3-Virtual-1 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Virtual-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4749
+
+KERNEL[1100.928310] change   /devices/faux/vkms/drm/card3 (drm)
+ACTION=change
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=53
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4750
+MAJOR=226
+MINOR=3
+
+UDEV  [1100.937332] add      /devices/faux/vkms/drm/card3 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4746
+USEC_INITIALIZED=1100926643
+MAJOR=226
+MINOR=3
+TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+
+UDEV  [1100.938674] add      /devices/faux/vkms/drm/card3/card3-Writeback-1 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Writeback-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4747
+USEC_INITIALIZED=1100926815
+TAGS=:master-of-seat:seat:mutter-device-ignore:
+CURRENT_TAGS=:master-of-seat:seat:mutter-device-ignore:
+
+UDEV  [1100.939914] change   /devices/faux/vkms/drm/card3 (drm)
+ACTION=change
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=47
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4748
+USEC_INITIALIZED=1100926643
+MAJOR=226
+MINOR=3
+TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+
+UDEV  [1100.941095] add      /devices/faux/vkms/drm/card3/card3-Virtual-1 (drm)
+ACTION=add
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Virtual-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4749
+USEC_INITIALIZED=1100927232
+TAGS=:master-of-seat:seat:mutter-device-ignore:
+CURRENT_TAGS=:master-of-seat:seat:mutter-device-ignore:
+
+UDEV  [1100.942782] change   /devices/faux/vkms/drm/card3 (drm)
+ACTION=change
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+HOTPLUG=1
+CONNECTOR=53
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4750
+USEC_INITIALIZED=1100926643
+MAJOR=226
+MINOR=3
+TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+
+KERNEL[1100.969473] remove   /devices/faux/vkms/drm/card3/card3-Writeback-1 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Writeback-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4754
+
+KERNEL[1100.969707] remove   /devices/faux/vkms/drm/card3/card3-Virtual-1 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Virtual-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4755
+
+KERNEL[1100.969866] remove   /devices/faux/vkms/drm/card3 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4756
+MAJOR=226
+MINOR=3
+
+UDEV  [1100.970501] remove   /devices/faux/vkms/drm/card3/card3-Writeback-1 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Writeback-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4754
+USEC_INITIALIZED=1100926815
+TAGS=:master-of-seat:seat:mutter-device-ignore:
+CURRENT_TAGS=:master-of-seat:seat:mutter-device-ignore:
+
+UDEV  [1100.971588] remove   /devices/faux/vkms/drm/card3/card3-Virtual-1 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3/card3-Virtual-1
+SUBSYSTEM=drm
+DEVTYPE=drm_connector
+SEQNUM=4755
+USEC_INITIALIZED=1100927232
+TAGS=:master-of-seat:seat:mutter-device-ignore:
+CURRENT_TAGS=:master-of-seat:seat:mutter-device-ignore:
+
+UDEV  [1100.972518] remove   /devices/faux/vkms/drm/card3 (drm)
+ACTION=remove
+DEVPATH=/devices/faux/vkms/drm/card3
+SUBSYSTEM=drm
+DEVNAME=/dev/dri/card3
+DEVTYPE=drm_minor
+SEQNUM=4756
+USEC_INITIALIZED=1100926643
+MAJOR=226
+MINOR=3
+TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+CURRENT_TAGS=:mutter-device-ignore:uaccess:master-of-seat:seat:
+
+KERNEL[1237.820066] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.0/drm/card1 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.0/drm/card1
+SUBSYSTEM=drm
+SYNTH_UUID=ecaf7f59-6ccb-4230-9afe-0a1a2fc0a6f5
+DEVNAME=/dev/dri/card1
+DEVTYPE=drm_minor
+SEQNUM=4760
+MAJOR=226
+MINOR=1
+
+KERNEL[1237.821164] change   /devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0 (drm)
+ACTION=change
+DEVPATH=/devices/pci0000:00/0000:00:08.1/0000:04:00.3/usb2/2-3/drm/card0
+SUBSYSTEM=drm
+SYNTH_UUID=9e4b8e4a-98a7-4617-a9db-99ce77786a72
+DEVNAME=/dev/dri/card0
+DEVTYPE=drm_minor
+SEQNUM=4767
+MAJOR=226
+MINOR=0
+
