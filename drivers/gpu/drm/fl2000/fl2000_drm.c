@@ -26,10 +26,17 @@
 #define FL2000_MAX_WIDTH  4000
 #define FL2000_MAX_HEIGHT 4000
 
-/* Force using 32-bit XRGB8888 on input for simplicity */
+/*
+ * 32-bit input. The 10-bit formats are accepted because the compositor hands
+ * us its scanout buffer as it is: Mutter renders ARGB2101010 and, when the
+ * secondary output cannot take that format, falls back to a copy path that
+ * has leaked GPU memory until the desktop stalled.
+ */
 #define FL2000_FB_BPP 32
 static const u32 fl2000_pixel_formats[] = {
 	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_XRGB2101010,
+	DRM_FORMAT_ARGB2101010,
 };
 
 /* The cursor sprite is blended into the outgoing frame by the CPU */
@@ -347,8 +354,9 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 
 	if (drm_dev_enter(plane->dev, &idx)) {
 		start = ktime_get();
-		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0], fb->width,
-				       fb->height, fb->pitches[0], &damage);
+		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0],
+				       fb->format->format, fb->width, fb->height,
+				       fb->pitches[0], &damage);
 		fl2000_stream_note_render(drm_if->stream,
 					  (unsigned int)ktime_us_delta(ktime_get(), start),
 					  drm_rect_width(&damage) * drm_rect_height(&damage));

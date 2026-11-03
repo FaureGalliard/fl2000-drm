@@ -613,6 +613,21 @@ static void fl2000_xrgb8888_to_rgb565_line(u16 *dbuf, const u32 *sbuf, u32 x_sta
 }
 
 /*
+ * The 10-bit formats keep the colour in bits 29:0 (bits 31:30 are unused or
+ * alpha, which the primary plane ignores). Drop the two low bits of each
+ * channel, in place, so the converters above only deal with XRGB8888.
+ */
+static void fl2000_xrgb2101010_to_xrgb8888_line(u32 *buf, u32 x_start, u32 x_end)
+{
+	for (unsigned int x = x_start; x < x_end; x++) {
+		u32 pix = buf[x - x_start];
+
+		buf[x - x_start] = (((pix >> 22) & 0xFF) << 16) | (((pix >> 12) & 0xFF) << 8) |
+				   ((pix >> 2) & 0xFF);
+	}
+}
+
+/*
  * Pull one span of source pixels into the cached line buffer.
  *
  * A framebuffer imported from the primary GPU lives in its VRAM, mapped
@@ -643,8 +658,8 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
  * happened to be free.
  */
 void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
-			    unsigned int width, unsigned int height, unsigned int pitch,
-			    const struct drm_rect *clip)
+			    u32 format, unsigned int width, unsigned int height,
+			    unsigned int pitch, const struct drm_rect *clip)
 {
 	void *dst;
 	u32 dst_line_len;
@@ -683,6 +698,9 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		 */
 		fl2000_read_span(stream, src_map,
 				 (size_t)y * pitch + (size_t)x_start * sizeof(u32), span);
+
+		if (format != DRM_FORMAT_XRGB8888)
+			fl2000_xrgb2101010_to_xrgb8888_line(stream->line_buf, x_start, x_end);
 
 		switch (stream->bytes_pix) {
 		case 2:
