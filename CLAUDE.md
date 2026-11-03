@@ -170,12 +170,16 @@ that). Leave the dongle unplugged ~10 s first and verify with
 ## Open issues
 
 1. **Hot replug.** Unplug and replug are clean in the kernel, the colour-bar
-   test works afterwards (`docs/field-test-15_04.log`) and, on kernel 7.2.11 with
-   Mutter 51.1, the monitor comes back without logging out. Mutter 50.4 did not
-   add the output (and once crashed); findings and what not to retry are in
+   test works afterwards (`docs/field-test-15_04.log`). Under GNOME the result
+   depends on the DRM node number: with Mutter 51.1 a replug that gets a new
+   node (card2 -> card3) shows the monitor, one that reuses the old node
+   (`device already present`) does not and also drops the other monitor until
+   the next login. Mutter 50.4 never added the output (and once crashed). Not
+   fixable from the driver; findings and what not to retry are in
    `docs/DEVELOPMENT.md`, "Unplug and replug". A short desktop stall while the
    dongle connects was traced to re-reading the EDID on every probe; the fix
-   (keep the EDID until HPD drops) still needs a hardware check. The full field
+   (keep the EDID until HPD drops) is in and the log shows one read per
+   replug, but the stall itself has not been re-checked. The full field
    test on a clean boot is still to be repeated on the current branch. Quick
    root-free check after a test boot: `scripts/post-boot-check.sh`.
 2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's

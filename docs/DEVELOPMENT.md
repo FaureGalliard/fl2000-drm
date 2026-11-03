@@ -126,9 +126,17 @@ State on the `integration` branch after the work of that day:
   modules are installed per kernel (`/lib/modules/<version>/extra/`) and the new
   kernel had none. It rebuilt unchanged against 7.2.11 and loaded
   (`sudo install -D -m 644 fl2000.ko /lib/modules/$(uname -r)/extra/fl2000.ko`,
-  `depmod -a`). With Mutter 51.1 the unplug/replug cycle brings the monitor back
-  without logging out, so the problem below was fixed on the Mutter side or is
-  gone with it; it is kept for the record.
+  `depmod -a`). With Mutter 51.1 the first replug of the session brought the
+  monitor back (the DRM node changed, card2 -> card3). The next replug got the
+  same node again (card2) and failed: `Failed to hotplug secondary gpu
+  '/dev/dri/card2': device already present`, then `Failed to use linear monitor
+  configuration: No available CRTC for monitor 'GSM 22MP55' not found`, which
+  also disabled the monitor on the primary GPU's HDMI port. The dongle's output
+  stayed enabled by the kernel's fbdev client (nothing draws on it). So Mutter
+  keeps the GPU it was given and cannot add a new one under the same path;
+  logging out and in clears it. The kernel side was clean throughout, and the
+  EDID is now read once per connection (one `EDID read failed, trying the other
+  DDC path` per replug).
 - **Open (seen with GNOME/Mutter 50.4): Mutter does not pick the output up** when the dongle
   appears with the session open. The log says `Added device '/dev/dri/cardN'
   (fl2000)` and `Created gbm renderer`, but `GetCurrentState` and
