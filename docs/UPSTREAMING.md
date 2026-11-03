@@ -78,21 +78,28 @@ Hay tres caminos razonables: que él lo envíe con tus parches (te da
 `Co-developed-by:` + `Signed-off-by:` o `Tested-by:`, y también cuenta como
 contribución al kernel), enviarlo juntos, o que te ceda el envío.
 
-## Uso de IA: `Assisted-by`
+## Uso de IA
 
-`Documentation/process/coding-assistants.rst` (en el árbol del kernel) dice:
+En el árbol 7.4-rc1 (comprobado el 3 de noviembre de 2026) la regla está en dos
+documentos, y ninguno de los dos fija ya el formato de una etiqueta
+`Assisted-by:`:
 
-- Una IA nunca pone `Signed-off-by`. Solo lo pone el humano, que certifica el
-  DCO y se responsabiliza del código.
-- Las contribuciones en las que ha participado una herramienta de IA deberían
-  llevar `Assisted-by: AGENTE:MODELO [herramientas]`.
+- `Documentation/process/coding-assistants.rst`: una IA nunca pone
+  `Signed-off-by`. Solo lo pone el humano, que certifica el DCO, revisa todo el
+  código y se responsabiliza de él.
+- `Documentation/process/generated-content.rst`: hay que ser transparente en la
+  carta de presentación y en los changelogs sobre qué herramientas se usaron,
+  qué partes afectaron y cómo se probó. Los mantenedores pueden tratarlo como
+  cualquier contribución, revisarlo con más cuidado o rechazarlo.
 
 Buena parte de esta preparación se hizo con ayuda de IA, así que la regla
-aplica. El script no añade la etiqueta por defecto. Para incluirla:
+aplica. El script no añade ninguna etiqueta por defecto. Para incluir un
+trailer `Assisted-by:` (práctica habitual aunque ya no esté descrita en esos
+documentos):
 `ASSISTED_BY="AGENTE:MODELO" scripts/make-upstream-series.sh ...`, con el
-nombre y la versión exactos de la herramienta que usaste. No declararlo y que
-luego se note suele sentar peor a los revisores que declararlo. La decisión es
-tuya.
+nombre y la versión exactos de la herramienta usada. El `Signed-off-by` que
+añade el script debe generarlo el humano que envía: ejecútalo tú, no una
+herramienta de IA.
 
 ## Calendario realista
 
