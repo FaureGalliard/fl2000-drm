@@ -94,10 +94,15 @@ upstream requires quiet drivers. To see them, boot with
 `/etc/modprobe.d/fl2000-debug.conf` containing `options fl2000 dyndbg=+p`
 (and `drm.debug=0x04` on the kernel command line for the DRM ones).
 
-**Boot with the adapter already connected and the monitor powered on.** Hot
-replug now re-enumerates and rebinds (a blocked `usb_hub_wq` used to prevent
-that), but GNOME does not show the new output until the next login. Leave the
-dongle unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
+**Install the module for every new kernel.** Out-of-tree modules live per
+kernel version; after `pacman -Syu` brings a new kernel the driver is simply
+missing until it is rebuilt and installed
+(`sudo install -D -m 644 fl2000.ko /lib/modules/$(uname -r)/extra/fl2000.ko &&
+sudo depmod -a`). The tree built unchanged for 7.1.8 and 7.2.11.
+
+Hot replug re-enumerates and rebinds (a blocked `usb_hub_wq` used to prevent
+that). Leave the dongle unplugged ~10 s first and verify with
+`lsusb -d 1d5c:2000`.
 
 ## Non-obvious invariants — breaking these has caused real crashes
 
@@ -164,14 +169,15 @@ dongle unplugged ~10 s first and verify with `lsusb -d 1d5c:2000`.
 
 ## Open issues
 
-1. **Hot replug under GNOME.** Unplug and replug are clean in the kernel and
-   the colour-bar test works afterwards (`docs/field-test-15_04.log`), but
-   Mutter 50.4 does not add the output when the dongle appears with the session
-   open, and a second replug has crashed gnome-shell. Not fixable from the
-   driver so far; findings and what not to retry are in `docs/DEVELOPMENT.md`,
-   "Unplug and replug". Plug the dongle in before login. The full field test on
-   a clean boot is still to be repeated on the current branch. Quick root-free
-   check after a test boot: `scripts/post-boot-check.sh`.
+1. **Hot replug.** Unplug and replug are clean in the kernel, the colour-bar
+   test works afterwards (`docs/field-test-15_04.log`) and, on kernel 7.2.11 with
+   Mutter 51.1, the monitor comes back without logging out. Mutter 50.4 did not
+   add the output (and once crashed); findings and what not to retry are in
+   `docs/DEVELOPMENT.md`, "Unplug and replug". A short desktop stall while the
+   dongle connects was traced to re-reading the EDID on every probe; the fix
+   (keep the EDID until HPD drops) still needs a hardware check. The full field
+   test on a clean boot is still to be repeated on the current branch. Quick
+   root-free check after a test boot: `scripts/post-boot-check.sh`.
 2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's
    refresh rate (it used to follow every URB completion). The stream itself
    still free-runs, resending the last frame at maximum USB rate; pacing it to

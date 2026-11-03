@@ -75,7 +75,7 @@ found. All are fixed.
 | Hard kernel hang on disconnect | `it66121_destroy()` → `component_del()` called from the master unbind callback, which already holds the global component mutex → self-deadlock |
 | Machine hangs when the adapter is unplugged while streaming | A data URB whose submission failed (`-ENODEV`) was freed while still on the stream's anchor; `usb_kill_anchored_urbs()` then spun forever on the dangling entry. Fixed with `usb_unanchor_urb()` |
 | After an unplug the dongle never enumerates again (`usb_hub_wq` stuck in `i2c_del_adapter()`) | The DRM device was a child of the I2C adapter and so held a reference on it, while `i2c_del_adapter()` waits for all references. The DRM device is now a child of the USB device and `drm_dev_put()` is explicit in `fl2000_drm_if_release()` |
-| After a monitor/cable cycle the connector only offers modes up to 1024x768 and an empty EDID | The EDID was cached in the bridge and only handed to the connector the first time; the DRM core drops it when the connector goes through `disconnected`. It is now read on every probe, starting with the DDC path that worked last time |
+| After a monitor/cable cycle the connector only offers modes up to 1024x768 and an empty EDID | The EDID was cached in the bridge and only handed to the connector the first time; the DRM core drops it when the connector goes through `disconnected`. It is now handed to the connector on every probe and read again only after HPD reported no monitor (reading it on every probe stalled the compositor for ~1 s per probe), starting with the DDC path that worked last time |
 | Display torn down ~30 s after every plug | SCSI timeout on the virtual CD → `usb_reset_device()` on the whole dongle |
 | Driver never re-binds after a USB reset | Probe bailed out with `-ENODEV` because the bridge had been destroyed on disconnect while `devs` survived |
 | `modprobe` appears to freeze the terminal | Probe runs synchronously in modprobe context while the device is stuck in the reset cycle; not a driver hang. Load the module with the adapter unplugged, then plug it (probe runs in a udev worker) |
@@ -121,7 +121,15 @@ State on the `integration` branch after the work of that day:
   unplug/replug cycle (`field-test-15_04.log`). The kernel `udev` events are the
   expected ones (`field-udev-replug-14_41.log`: remove of the connector and card,
   then add of the new card and connector, `change HOTPLUG=1`).
-- **Open: GNOME/Mutter 50.4 does not pick the output up** when the dongle
+- **After `pacman -Syu` on 29 Oct 2026 (kernel 7.1.8 -> 7.2.11, Mutter 50.4 ->
+  51.1, gnome-shell 51.1, Mesa 26.2.6)** the driver did not load: out-of-tree
+  modules are installed per kernel (`/lib/modules/<version>/extra/`) and the new
+  kernel had none. It rebuilt unchanged against 7.2.11 and loaded
+  (`sudo install -D -m 644 fl2000.ko /lib/modules/$(uname -r)/extra/fl2000.ko`,
+  `depmod -a`). With Mutter 51.1 the unplug/replug cycle brings the monitor back
+  without logging out, so the problem below was fixed on the Mutter side or is
+  gone with it; it is kept for the record.
+- **Open (seen with GNOME/Mutter 50.4): Mutter does not pick the output up** when the dongle
   appears with the session open. The log says `Added device '/dev/dri/cardN'
   (fl2000)` and `Created gbm renderer`, but `GetCurrentState` and
   `GetResources` list only amdgpu. Loading `vkms` once made the monitor appear
