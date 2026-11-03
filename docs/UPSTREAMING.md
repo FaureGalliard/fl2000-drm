@@ -9,6 +9,18 @@ documentos antes del primer envío vale la pena; esto es el atajo.
 
 ## 0. Antes de nada: qué falta probar en hardware
 
+**Estado a 3 de noviembre de 2026** (rama `integration`): la serie se regeneró
+sobre `drm-misc-next` en 7.4-rc1 (`2ebbeea89`), los 4 parches compilan cada uno
+por separado con `W=1` (`CHECK_BUILD=1`) y `checkpatch --strict` da 0 errores
+(solo el aviso «does MAINTAINERS need updating?» en los parches 2 a 4, porque la
+entrada ya está en el 1). Falta `sparse` (`C=1`), la comprobación SPDX de
+`checkpatch` (necesita `python-ply`) y compilar con otra arquitectura. En
+hardware: la desconexión ya no cuelga (dos arreglos, ver
+`docs/DEVELOPMENT.md`, «Unplug and replug») y la reconexión funciona al
+iniciar sesión; con la sesión abierta depende de Mutter (issue #710, sin
+arreglo). Pendiente: repetir `scripts/fl2000-field-test.sh` en un arranque
+limpio con el kernel actual, decidir el `Assisted-by:` y hablar con klogg.
+
 El código compila sin warnings (`W=1`) y pasa `checkpatch --strict`, pero los
 cambios de esta preparación **no se han probado en el adaptador**. Antes de
 enviar hay que confirmar en el hardware real:
