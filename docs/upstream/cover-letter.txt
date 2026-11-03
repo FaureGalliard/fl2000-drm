@@ -72,4 +72,14 @@ desktop and the cursor work, at 59 frames per second on the link.
 Every patch builds without warnings with W=1 on top of drm-misc-next,
 and the series passes checkpatch --strict.
 
+Tool use, as described in Documentation/process/generated-content.rst: I
+used an AI coding assistant (Claude Code with Anthropic Claude models)
+extensively while preparing this series. It helped port the driver to the
+current APIs, clean it up to kernel style, write the shadow-frame
+streaming and the cursor plane, track down and fix the hangs on unplug,
+and draft the commit messages and this letter. I reviewed the result and
+tested it on the hardware described above; the Signed-off-by lines are
+mine. The series was generated and checked (per-patch builds, checkpatch)
+by scripts in the out-of-tree repository this driver is developed in.
+
 Thanks,

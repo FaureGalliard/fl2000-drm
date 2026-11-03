@@ -97,7 +97,9 @@ aplica. El script no añade ninguna etiqueta por defecto. Para incluir un
 trailer `Assisted-by:` (práctica habitual aunque ya no esté descrita en esos
 documentos):
 `ASSISTED_BY="AGENTE:MODELO" scripts/make-upstream-series.sh ...`, con el
-nombre y la versión exactos de la herramienta usada. El `Signed-off-by` que
+nombre y la versión exactos de la herramienta usada. La carta de presentación (`docs/upstream/cover-letter.txt`) ya lleva el párrafo
+de transparencia que pide `generated-content.rst`; ajústalo a lo que hiciste de
+verdad antes de enviar. El `Signed-off-by` que
 añade el script debe generarlo el humano que envía: ejecútalo tú, no una
 herramienta de IA.
 
