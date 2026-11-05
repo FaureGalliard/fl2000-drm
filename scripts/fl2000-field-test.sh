@@ -10,6 +10,8 @@
 #
 # Con un monitor VGA: dejarlo conectado y encendido. Para probar otro modo que
 # el preferido: sudo FL2000_TEST_MODE=1366x768 ./scripts/fl2000-field-test.sh
+# Varios modos en una pasada, separados por espacios (nombre o '#indice' de
+# 'modetest -c'):  sudo FL2000_TEST_MODE='1366x768 #14 800x600' ./scripts/...
 #
 # El resultado queda en docs/field-test-HH_MM.log — hacer commit y push.
 
@@ -24,6 +26,14 @@ step() { echo; echo "=== $* ==="; }
 
 echo "fl2000 field test - $(date)"
 echo "kernel: $(uname -r)"
+echo "terminal: $(tty)"
+case "$(tty)" in
+/dev/pts/*)
+	echo ">>> AVISO: esto es una terminal de la sesion grafica, no una TTY."
+	echo ">>> Si GNOME usa el adaptador, la prueba de modeset fallara con"
+	echo ">>> 'Permission denied'. Para verla: Ctrl+Alt+F3, entrar y repetir."
+	;;
+esac
 
 step "quirk usb-storage (debe contener 1d5c:2000:i)"
 modprobe usb_storage 2>/dev/null
@@ -88,7 +98,7 @@ ls /sys/class/drm/
 for f in /sys/class/drm/card*-*/status; do echo "$f: $(cat "$f")"; done
 
 step "conectores y modos (modetest -c)"
-modetest -M fl2000 -c 2>&1 | head -40
+modetest -M fl2000 -c 2>&1 | head -80
 
 step "EDID decodificado (si hay edid-decode)"
 for e in /sys/class/drm/card*-*/edid; do
@@ -112,12 +122,18 @@ if [ "$FOUND" = 1 ]; then
 	CONN=$(modetest -M fl2000 -c 2>/dev/null | awk '/\<connected\>/{print $1; exit}')
 	# Primer modo de la lista (el preferido del monitor), sin fijar refresh:
 	# p.ej. el LG lista 1920x1080@59.94 y "1920x1080-60" no haria match
-	MODE=${FL2000_TEST_MODE:-$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')}
-	if [ -n "${CONN:-}" ] && [ -n "${MODE:-}" ]; then
-		step "PRUEBA DE MODESET: patron de colores 15s en conector $CONN modo $MODE"
-		echo ">>> MIRA EL MONITOR AHORA - deberian verse barras de colores <<<"
-		sleep 12 | modetest -M fl2000 -s "$CONN:$MODE" 2>&1
-		echo "(anota si se vio el patron y compartelo junto con este log)"
+	MODES=${FL2000_TEST_MODE:-$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')}
+	if [ -n "${CONN:-}" ] && [ -n "${MODES:-}" ]; then
+		for MODE in $MODES; do
+			step "PRUEBA DE MODESET: patron de colores 12s en conector $CONN modo $MODE"
+			echo ">>> MIRA EL MONITOR AHORA - deberian verse barras de colores <<<"
+			sleep 12 | modetest -M fl2000 -s "$CONN:$MODE" 2>&1
+			# El chip toma un frame por refresco: 'sent/s' muy por encima
+			# del refresco del modo es que no ve el final de los frames
+			echo "ultima linea Stream durante la prueba (sent/s ~ refresco del modo):"
+			dmesg | grep "Stream:" | tail -1
+			echo "(anota si se vio el patron en $MODE)"
+		done
 	else
 		step "PRUEBA DE MODESET omitida: sin conector conectado o sin modos"
 	fi
