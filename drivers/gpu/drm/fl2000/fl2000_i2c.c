@@ -4,6 +4,10 @@
  * (C) Copyright 2018-2019, Artem Mygaiev
  */
 
+#include <linux/unaligned.h>
+
+#include <drm/drm_edid.h>
+
 #include "fl2000.h"
 
 /*
@@ -83,6 +87,49 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 	}
 
 	return num;
+}
+
+/*
+ * Monitor DDC on the FL2000 bus. The bridge's own EDID FIFO does not work on the tested boards, and
+ * the VGA connector has no bridge at all, so EDID is read with the FL2000 I2C engine at address
+ * 0x50, 4 bytes per operation with an 8-bit offset, which covers EDID blocks 0 and 1.
+ */
+#define FL2000_DDC_ADDR 0x50
+
+/**
+ * fl2000_ddc_read_block() - read one EDID block through the FL2000 I2C engine
+ * @adapter: the FL2000 I2C adapter
+ * @buf: destination, @len bytes
+ * @block: EDID block number (0 or 1)
+ * @len: bytes to read, at most EDID_LENGTH
+ *
+ * The signature matches what drm_edid_read_custom() expects, with the adapter as context.
+ *
+ * Return: 0 on success, a negative error code otherwise
+ */
+int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int block, size_t len)
+{
+	struct usb_device *usb_dev = adapter->algo_data;
+	unsigned int start = block * EDID_LENGTH;
+	int ret = 0;
+
+	if (block > 1 || len > EDID_LENGTH)
+		return -EOPNOTSUPP;
+
+	/* One operation of the engine is a sequence of register accesses: keep others out */
+	i2c_lock_bus(adapter, I2C_LOCK_SEGMENT);
+	for (unsigned int i = 0; i < len; i += 4) {
+		u32 data;
+
+		ret = fl2000_i2c_dword(usb_dev, true, FL2000_DDC_ADDR, start + i, &data);
+		if (ret)
+			break;
+
+		put_unaligned_le32(data, buf + i);
+	}
+	i2c_unlock_bus(adapter, I2C_LOCK_SEGMENT);
+
+	return ret;
 }
 
 static u32 fl2000_i2c_func(struct i2c_adapter *adap)

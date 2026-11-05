@@ -63,6 +63,9 @@ static const u32 fl2000_cursor_formats[] = {
 /* Maximum acceptable ppm error */
 #define FL2000_PPM_ERR_MAX 500
 
+/* How far htotal may be stretched or shrunk to land on a PLL setting, pixels */
+#define FL2000_MAX_H_ADJUST 10
+
 /* Assume bulk transfers can use only 80% of USB bandwidth */
 #define FL2000_BULK_BW_PERCENT 80
 
@@ -118,8 +121,11 @@ struct fl2000_drm_if {
 	struct drm_plane cursor;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
+	struct fl2000_vga vga;
 	struct fl2000_stream *stream;
 	struct fl2000_intr *intr;
+	/* Set once userspace can see the device: events before that have nobody to tell */
+	bool registered;
 };
 
 static inline struct fl2000_drm_if *to_fl2000_drm_if(struct drm_device *drm)
@@ -237,14 +243,19 @@ static u64 fl2000_pll_calc(u64 clock_mil, struct fl2000_pll *pll, u32 *clock_cal
 	return min_ppm_err;
 }
 
+/*
+ * Find the PLL setting for a mode. With a non-zero @max_h_adjustment the search may stretch or
+ * shrink htotal, keeping the refresh rate, until the pixel clock lands on something the PLL can
+ * make; zero accepts only the exact timings of the mode.
+ */
 static int fl2000_mode_calc(const struct drm_display_mode *mode,
-			    struct drm_display_mode *adjusted_mode, struct fl2000_pll *pll)
+			    struct drm_display_mode *adjusted_mode, struct fl2000_pll *pll,
+			    int max_h_adjustment)
 {
 	u64 ppm_err;
 	u32 clock_calculated;
 	u64 clock_mil_adjusted;
 	const u64 clock_mil = (u64)mode->clock * 1000 * FL2000_PLL_PRECISION;
-	const int max_h_adjustment = 10;
 
 	if (mode->clock * 1000 > FL2000_MAX_PIXCLOCK)
 		return -EINVAL;
@@ -254,7 +265,7 @@ static int fl2000_mode_calc(const struct drm_display_mode *mode,
 	 * 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, ...
 	 * Here, 's' is used for sign, 'm' is used for modulo, and 'd' is the adjustment value.
 	 */
-	for (int m = 0, s = 0, d = 0; m <= max_h_adjustment * 2; m++, s = -s, d += m * s) {
+	for (int m = 0, s = 1, d = 0; m <= max_h_adjustment * 2; m++, s = -s, d += m * s) {
 		/*
 		 * Maximum pixel clock 1GHz, or 10^9Hz. Multiply by 10^6 we get 10^15Hz. Assume
 		 * maximum htotal is 10000 pix (no way) we get 10^19 max value and using u64 which
@@ -289,7 +300,7 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 	struct fl2000_pll pll;
 
 	/* Get PLL configuration and check if mode adjustments are needed */
-	if (fl2000_mode_calc(mode, &adjusted_mode, &pll))
+	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_MAX_H_ADJUST))
 		return MODE_BAD;
 
 	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, adjusted_mode.clock) == 0)
@@ -456,7 +467,8 @@ static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_com
 		return 0;
 
 	/* PLL configuration, with htotal and clock adjusted to what the PLL can produce */
-	ret = fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll);
+	ret = fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll,
+			       FL2000_MAX_H_ADJUST);
 	if (ret)
 		return ret;
 
@@ -465,6 +477,18 @@ static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_com
 		return -EINVAL;
 
 	return 0;
+}
+
+/*
+ * HDMI has always run with the monitor sense forced, so it stays so whenever HDMI is driven.
+ * Driving VGA alone leaves it to the chip, which then powers the DAC by itself and notices the
+ * cable being unplugged.
+ */
+static void fl2000_crtc_force_connect(struct fl2000_drm_if *drm_if,
+				      const struct drm_crtc_state *crtc_state)
+{
+	fl2000_force_connect(drm_if->usb_dev,
+			     crtc_state->encoder_mask & drm_encoder_mask(&drm_if->encoder));
 }
 
 /* Called before the bridge's mode_set: the FL2000 must be clocked first */
@@ -483,7 +507,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	 * Same computation as in atomic_check, which already validated the mode
 	 * and stored the adjusted htotal and clock in adjusted_mode.
 	 */
-	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll)))
+	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_MAX_H_ADJUST)))
 		return;
 	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode->clock);
 
@@ -502,6 +526,8 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 
 	/* Set PLL settings */
 	fl2000_set_pll(usb_dev, &pll);
+
+	fl2000_crtc_force_connect(drm_if, crtc->state);
 
 	/* Reset FL2000 and confirm PLL settings */
 	fl2000_reset(usb_dev);
@@ -527,6 +553,9 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 {
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
 
+	/* mode_set_nofb does not run when only the connector changed, and disable cleared it */
+	fl2000_crtc_force_connect(drm_if, drm_atomic_get_new_crtc_state(state, crtc));
+
 	fl2000_stream_enable(drm_if->stream);
 
 	drm_crtc_vblank_atomic_enable(crtc, state);
@@ -537,6 +566,9 @@ static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
 
 	fl2000_stream_disable(drm_if->stream);
+
+	/* Nothing is shown any more: let the chip's own sense report the monitors again */
+	fl2000_force_connect(drm_if->usb_dev, false);
 
 	drm_crtc_vblank_atomic_disable(crtc, state);
 }
@@ -563,6 +595,47 @@ static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	DRM_CRTC_VBLANK_TIMER_FUNCS,
 };
 
+/*
+ * Digital sinks are only offered the modes the PLL hits with the standard htotal: a monitor expects
+ * the exact timing of the mode it advertised. Analog monitors resynchronise to anything, so the
+ * VGA output may go through the htotal adjustment of fl2000_mode_calc().
+ */
+static enum drm_mode_status fl2000_hdmi_encoder_mode_valid(struct drm_encoder *encoder,
+							   const struct drm_display_mode *mode)
+{
+	struct fl2000_pll pll;
+
+	return fl2000_mode_calc(mode, NULL, &pll, 0) ? MODE_NOCLOCK : MODE_OK;
+}
+
+static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = {
+	.mode_valid = fl2000_hdmi_encoder_mode_valid,
+};
+
+/**
+ * fl2000_drm_hotplug() - tell userspace that a monitor came, went or changed
+ * @drm: DRM device
+ * @events: the sink event bits of the status register that were seen
+ *
+ * Called from the interrupt work.
+ */
+void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
+{
+	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
+	int idx;
+
+	/* The device sends uevents only once it has been registered */
+	if (!smp_load_acquire(&drm_if->registered) || !drm_dev_enter(drm, &idx))
+		return;
+
+	if (events & (FL2000_VGA_STATUS_MONITOR_EVENT | FL2000_VGA_STATUS_EDID_EVENT))
+		fl2000_vga_sink_event(&drm_if->vga);
+
+	drm_kms_helper_hotplug_event(drm);
+
+	drm_dev_exit(idx);
+}
+
 static void fl2000_drm_if_release(struct device *dev, void *res)
 {
 	struct fl2000_drm_if *drm_if = *(struct fl2000_drm_if **)res;
@@ -573,6 +646,7 @@ static void fl2000_drm_if_release(struct device *dev, void *res)
 
 	/* No hotplug events for a node that is about to disappear */
 	fl2000_intr_quiesce(drm_if->intr);
+	drm_kms_helper_poll_fini(drm);
 
 	/*
 	 * Block userspace access and shut down the display pipeline while all
@@ -703,6 +777,7 @@ int fl2000_drm_bind(struct device *master)
 		goto err_free_holder;
 	}
 	drm_if->encoder.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
+	drm_encoder_helper_add(&drm_if->encoder, &fl2000_hdmi_encoder_helper_funcs);
 
 	/* Start streaming interface */
 	drm_if->stream = fl2000_stream_create(usb_dev);
@@ -725,6 +800,17 @@ int fl2000_drm_bind(struct device *master)
 	if (ret) {
 		drm_err(drm, "Cannot attach bridge (%d)\n", ret);
 		goto err_destroy_intr;
+	}
+
+	/*
+	 * The VGA output goes in after the bridge: the IT66121 attaches to the first encoder of
+	 * the device, which has to be the HDMI one.
+	 */
+	ret = fl2000_vga_init(drm, &drm_if->vga, &drm_if->crtc, &drm_if->encoder,
+			      i2c_verify_adapter(master), drm_if->intr);
+	if (ret) {
+		drm_err(drm, "Cannot initialize VGA output (%d)\n", ret);
+		goto err_unbind;
 	}
 
 	drm_mode_config_reset(drm);
@@ -762,6 +848,12 @@ int fl2000_drm_bind(struct device *master)
 
 	*holder = drm_if;
 	devres_add(master, holder);
+
+	/* From here on the interrupt work may tell userspace about monitors */
+	smp_store_release(&drm_if->registered, true);
+
+	/* Polls the VGA connector: the chip's event for it can be missed */
+	drm_kms_helper_poll_init(drm);
 
 	/*
 	 * fbdev emulation, so the console can use the display. Last, because it

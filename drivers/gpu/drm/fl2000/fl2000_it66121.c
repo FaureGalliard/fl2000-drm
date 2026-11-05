@@ -296,6 +296,20 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
 		WRITE_ONCE(priv->edid_stale, true);
 }
 
+/**
+ * it66121_hpd_connected() - live state of the HDMI hot plug detect line
+ * @bridge: the IT66121 bridge
+ *
+ * Return: true if an HDMI monitor is connected, false if not or if it cannot be read
+ */
+bool it66121_hpd_connected(struct drm_bridge *bridge)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+	unsigned int val;
+
+	return !regmap_field_read(priv->hpd, &val) && val;
+}
+
 /*
  * Acknowledges pending IT66121 interrupts. The IT66121 interrupt line is
  * routed to the FL2000, which reports it on its own interrupt endpoint (see
@@ -440,27 +454,13 @@ static int it66121_get_edid_block(void *context, u8 *buf, unsigned int block, si
 static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int block, size_t len)
 {
 	struct it66121_priv *priv = context;
-	struct usb_device *usb_dev = priv->adapter->algo_data;
-	unsigned int start = block * EDID_LENGTH;
 	int ret;
 
-	if (block > 1 || len > EDID_LENGTH)
-		return -EOPNOTSUPP;
+	ret = fl2000_ddc_read_block(priv->adapter, buf, block, len);
+	if (ret)
+		dev_dbg(&priv->client->dev, "Direct EDID block %u read failed (%d)\n", block, ret);
 
-	for (unsigned int i = 0; i < len; i += 4) {
-		u32 data;
-
-		ret = fl2000_i2c_dword(usb_dev, true, EDID_DDC_ADDR >> 1, start + i, &data);
-		if (ret) {
-			dev_err(&priv->client->dev,
-				"Direct EDID read failed at offset %u (%d)\n", start + i, ret);
-			return ret;
-		}
-
-		put_unaligned_le32(data, buf + i);
-	}
-
-	return 0;
+	return ret;
 }
 
 static void it66121_read_edid(struct it66121_priv *priv, struct drm_connector *connector)

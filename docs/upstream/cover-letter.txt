@@ -19,7 +19,8 @@ on its own:
   1. USB driver, FL2000 register access (regmap) and I2C adapter
   2. IT66121 HDMI transmitter bridge, including the EDID fallback
   3. frame streaming over bulk URBs
-  4. the KMS pipeline, which makes the display usable
+  4. the KMS pipeline, which makes the display usable, including the
+     analog VGA output of adapters that have both connectors
 
 It is posted as an RFC because there are design points I would like
 feedback on before doing the larger reworks:
@@ -64,13 +65,23 @@ drm_client_setup().
 
 Other known limitations: no suspend/resume handling, the USB bandwidth
 check that should switch to RGB565 on slow links is not functional yet
-(RGB888 is always used), and the analog VGA output of the FL2000 is not
-supported: only the HDMI path through the IT66121 is, so adapters that
-expose just VGA do not work yet.
+(RGB888 is always used), and adapters with a VGA connector only, without
+an IT66121, are not supported: the analog output is only added next to
+the HDMI one.
+
+5. VGA detection. The chip has a single monitor sense input, which on
+   the adapter I have follows whichever monitor is plugged in, HDMI or
+   VGA. The VGA connector therefore reports a monitor when the chip
+   senses one and the IT66121 hot plug line is low, which means a
+   monitor on VGA is not reported while one is on HDMI (clone mode
+   needs video=VGA-1:e). Is this an acceptable way to do it, and is
+   there a better signal I should look for in the chip?
 
 Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
-to HDMI adapter and a 1920x1080 monitor: EDID, mode setting, the
-desktop and the cursor work, at 59 frames per second on the link.
+adapter with HDMI and VGA connectors: a 1920x1080 monitor on HDMI, and
+an old 1366x768 monitor without a usable EDID on VGA. EDID, mode
+setting, the desktop and the cursor work, at 59 frames per second on
+the link.
 Every patch builds without warnings with W=1 on top of drm-misc-next,
 and the series passes checkpatch --strict.
 

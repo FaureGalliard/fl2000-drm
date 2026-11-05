@@ -7,7 +7,7 @@ applies the matching sed rules below before building. Nothing here is part of
 the upstream patches.
 
   atomic-commit.sed   struct drm_atomic_commit was struct drm_atomic_state
-  create-state.sed    crtc/plane .atomic_create_state was .reset
+  create-state.sed    crtc/plane/connector .atomic_create_state was .reset
   bridge-state.sed    bridge .atomic_create_state was .atomic_reset
 
 When a new kernel renames something the driver uses, update the driver to the

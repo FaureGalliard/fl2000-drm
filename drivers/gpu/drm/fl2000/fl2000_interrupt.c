@@ -17,16 +17,60 @@ struct fl2000_intr {
 	dma_addr_t transfer_dma;
 	struct work_struct work;
 	struct workqueue_struct *work_queue;
+	/* Sink events read by anyone, not yet reported to userspace */
+	atomic_t events;
 };
+
+#define FL2000_SINK_EVENTS (FL2000_VGA_STATUS_HDMI_EVENT | FL2000_VGA_STATUS_MONITOR_EVENT | \
+			    FL2000_VGA_STATUS_EDID_EVENT)
+
+/*
+ * The event bits of the status register clear on read, and both the work below and the connector
+ * detection read it: keep the events from every read until the work reports them.
+ */
+static int fl2000_intr_read_status(struct fl2000_intr *intr, u32 *status)
+{
+	int ret;
+
+	ret = fl2000_read_status(intr->usb_dev, status);
+	if (!ret)
+		atomic_or(*status & FL2000_SINK_EVENTS, &intr->events);
+
+	return ret;
+}
+
+/**
+ * fl2000_intr_monitor_connected() - does the FL2000 sense a monitor on its monitor input
+ * @intr: interrupt context
+ *
+ * The chip powers the DAC and the PLL only while this is the case. On the boards with both
+ * outputs the input follows whichever monitor is connected, so it does not tell VGA from HDMI.
+ *
+ * Return: 1 if a monitor is sensed, 0 if not, a negative error code if the status cannot be read
+ */
+int fl2000_intr_monitor_connected(struct fl2000_intr *intr)
+{
+	u32 status;
+	int ret;
+
+	ret = fl2000_intr_read_status(intr, &status);
+	if (ret)
+		return ret;
+
+	return !!(status & FL2000_VGA_STATUS_MONITOR_STATUS);
+}
 
 static void fl2000_intr_work(struct work_struct *work)
 {
-	int event;
+	u32 status, events;
 	struct fl2000_intr *intr = container_of(work, struct fl2000_intr, work);
 
-	event = fl2000_check_interrupt(intr->usb_dev);
-	if (event)
-		drm_kms_helper_hotplug_event(intr->drm);
+	if (fl2000_intr_read_status(intr, &status))
+		return;
+
+	events = atomic_xchg(&intr->events, 0);
+	if (events)
+		fl2000_drm_hotplug(intr->drm, events);
 }
 
 static void fl2000_intr_release(struct device *dev, void *res)
@@ -105,6 +149,7 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	intr->usb_dev = usb_dev;
 	intr->drm = drm;
 	INIT_WORK(&intr->work, &fl2000_intr_work);
+	atomic_set(&intr->events, 0);
 
 	intr->urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!intr->urb) {

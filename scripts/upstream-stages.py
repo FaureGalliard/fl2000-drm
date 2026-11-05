@@ -45,7 +45,7 @@ drv = read('fl2000_drv.c')
 hdr = read('fl2000.h')
 mk = read('Makefile')
 
-final_objs = ['drm', 'drv', 'i2c', 'interrupt', 'it66121', 'registers', 'streaming']
+final_objs = ['drm', 'drv', 'i2c', 'interrupt', 'it66121', 'registers', 'streaming', 'vga']
 if mk != makefile(final_objs):
     sys.exit('drivers/gpu/drm/fl2000/Makefile changed: update makefile() and the stages')
 

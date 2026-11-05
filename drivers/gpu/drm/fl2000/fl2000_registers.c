@@ -88,10 +88,25 @@ int fl2000_set_pll(struct usb_device *usb_dev, struct fl2000_pll *pll)
 	      FIELD_PREP(FL2000_VGA_PLL_FUNCTION, pll->function);
 	regmap_write(regmap, FL2000_VGA_PLL_REG, val);
 
-	val = FL2000_VGA_CTRL_ACLK_FORCE_PLL_UP | FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT;
+	val = FL2000_VGA_CTRL_ACLK_FORCE_PLL_UP;
 	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, val, val);
 
 	return 0;
+}
+
+/*
+ * Make the chip believe a monitor is connected whatever its own sense says. The HDMI path has
+ * always run with this set, so it stays set while HDMI is driven. It must be clear while only VGA
+ * is driven: it hides the cable being unplugged, and with it clear the chip powers its DAC and PLL
+ * by itself whenever it senses a monitor.
+ */
+int fl2000_force_connect(struct usb_device *usb_dev, bool force)
+{
+	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
+
+	return regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
+				 FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT,
+				 force ? FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT : 0);
 }
 
 int fl2000_set_timings(struct usb_device *usb_dev, struct fl2000_timings *timings)
@@ -205,30 +220,31 @@ int fl2000_enable_interrupts(struct usb_device *usb_dev)
 	return 0;
 }
 
-int fl2000_check_interrupt(struct usb_device *usb_dev)
+/*
+ * Read the status register. Its event bits clear on read, so whoever reads it owns the events it
+ * returns: callers must not drop them.
+ */
+int fl2000_read_status(struct usb_device *usb_dev, u32 *status)
 {
 	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
-	unsigned int status;
-	int ret;
-	int sink_event = 0;
+	unsigned int val;
 	u32 mask;
+	int ret;
 
-	/* Process interrupt */
-	ret = regmap_read(regmap, FL2000_VGA_STATUS_REG, &status);
+	ret = regmap_read(regmap, FL2000_VGA_STATUS_REG, &val);
 	if (ret)
-		return 0; /* Treat as "no event": there is no caller to report to */
-
-	if (status & (FL2000_VGA_STATUS_HDMI_EVENT | FL2000_VGA_STATUS_MONITOR_EVENT |
-		      FL2000_VGA_STATUS_EDID_EVENT))
-		sink_event = 1;
+		return ret;
 
 	/* LBUF issues are recoverable */
-	mask = status & (FL2000_VGA_STATUS_LBUF_OVERFLOW | FL2000_VGA_STATUS_LBUF_UNDERFLOW);
-	regmap_write_bits(regmap, FL2000_VGA_STATUS_REG, mask, status);
+	mask = val & (FL2000_VGA_STATUS_LBUF_OVERFLOW | FL2000_VGA_STATUS_LBUF_UNDERFLOW);
+	if (mask)
+		regmap_write_bits(regmap, FL2000_VGA_STATUS_REG, mask, val);
 
 	/* lbuf_halt and vga_error are not handled: no recovery sequence is known */
 
-	return sink_event;
+	*status = val;
+
+	return 0;
 }
 
 int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data)

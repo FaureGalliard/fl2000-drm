@@ -1,6 +1,6 @@
 --- a/Makefile
 +++ b/Makefile
-@@ -1,12 +1,9 @@
+@@ -1,13 +1,9 @@
  # SPDX-License-Identifier: GPL-2.0-only
  
  fl2000-y := \
@@ -10,7 +10,8 @@
 -	fl2000_interrupt.o \
  	fl2000_it66121.o \
 -	fl2000_registers.o \
--	fl2000_streaming.o
+-	fl2000_streaming.o \
+-	fl2000_vga.o
 +	fl2000_registers.o
  
  obj-$(CONFIG_DRM_FL2000) += fl2000.o

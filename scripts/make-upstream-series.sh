@@ -138,7 +138,7 @@ stage 3 fl2000_streaming.c
 commit_stage 3
 
 # --- 4: KMS pipeline: the final driver ------------------------------------
-stage 4 Kconfig Makefile fl2000.h fl2000_drv.c fl2000_drm.c fl2000_interrupt.c
+stage 4 Kconfig Makefile fl2000.h fl2000_drv.c fl2000_drm.c fl2000_interrupt.c fl2000_vga.c
 commit_stage 4
 
 # The end of the series must be exactly the driver in this repository

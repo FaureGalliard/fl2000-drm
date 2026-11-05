@@ -5,21 +5,34 @@ IT66121 component is available, and connect the pieces:
 
 - a primary plane, a cursor plane, a CRTC and an encoder, with GEM
   SHMEM framebuffers accessed through the shadow-plane helpers and
-  XRGB8888 as the only format. The framebuffer is only read by the CPU,
-  so it does not need to be physically contiguous. The primary plane
-  passes its merged damage to the stream; the cursor plane hands over
-  its sprite, or only its position when the framebuffer is unchanged.
+  XRGB8888 (and the two 10-bit formats compositors render in, reduced
+  to 8 bits) as formats. The framebuffer is only read by the CPU, so it
+  does not need to be physically contiguous. The primary plane passes
+  its merged damage to the stream; the cursor plane hands over its
+  sprite, or only its position when the framebuffer is unchanged.
   Without a cursor plane, compositors keep the pointer on the primary
   GPU and it never appears on this output
 - mode validation and PLL search in the CRTC's atomic_check (which may
   adjust htotal and the clock in adjusted_mode), and FL2000 programming
-  in mode_set_nofb, before the bridge's mode_set
+  in mode_set_nofb, before the bridge's mode_set. The htotal
+  adjustment is only used for the VGA output: digital sinks are only
+  offered the modes the PLL hits with the standard timings
+- the analog VGA output of the chip, which adapters with a VGA
+  connector expose next to the HDMI one: a DAC encoder and a VGA
+  connector on the same CRTC (the two encoders are clones of each
+  other). The chip has one monitor sense input, which follows
+  whichever monitor is plugged in, so the VGA connector reports a
+  monitor when the chip senses one and the IT66121 does not; the EDID
+  is read with the FL2000 I2C engine, kept while the monitor stays, and
+  without one the standard timings are offered
 - vblank from the DRM vblank timer, as the FL2000 has no vblank
   interrupt, and fbdev emulation
 - the FL2000 interrupt endpoint, which reports monitor and IT66121
   events and triggers a hotplug event
 
-Tested on x86_64 with a UGREEN USB 3.0 to HDMI adapter (FL2000DX +
-IT66121FN) and a 1920x1080 monitor: EDID, mode setting and a GNOME
-Wayland desktop work, with the cursor, at 59 frames per second on the
-link and no measurable effect on the rest of the system.
+Tested on x86_64 with a UGREEN USB 3.0 adapter with HDMI and VGA
+connectors (FL2000DX + IT66121FN): a 1920x1080 monitor on HDMI and an
+old 1366x768 monitor without a usable EDID on VGA. EDID, mode setting
+and a GNOME Wayland desktop work, with the cursor, at 59 frames per
+second on the link and no measurable effect on the rest of the system.
+Adapters with a VGA connector only (no IT66121) are not supported.

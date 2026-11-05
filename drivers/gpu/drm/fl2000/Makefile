@@ -7,6 +7,7 @@ fl2000-y := \
 	fl2000_interrupt.o \
 	fl2000_it66121.o \
 	fl2000_registers.o \
-	fl2000_streaming.o
+	fl2000_streaming.o \
+	fl2000_vga.o
 
 obj-$(CONFIG_DRM_FL2000) += fl2000.o
