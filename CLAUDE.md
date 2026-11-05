@@ -185,12 +185,12 @@ that). Leave the dongle unplugged ~10 s first and verify with
 - **`FORCE_VGA_CONNECT` (ACLK bit 25) is only set while the HDMI encoder is
   active** and is cleared when the CRTC is disabled: set while driving VGA it
   hides the cable being unplugged and VGA detection would never see it go.
-- **Never change the timings of a mode to fit the PLL, least of all htotal.**
-  An analog monitor derives its sampling clock from the line length: with
-  htotal 1791 instead of 1792 the LG 19EN43 showed nothing (1366x768) or half a
-  picture (1360x768). Only the pixel clock may be off, by up to
+- **Do not change the timings of a mode to fit the PLL (htotal).** The PLL
+  search only moves the pixel clock, which may be off by up to
   `FL2000_PPM_ERR_MAX_VGA` on VGA; HDMI keeps 500 ppm
-  (`fl2000_hdmi_encoder_mode_valid()`), see `docs/pending/htotal-hdmi.md`.
+  (`fl2000_hdmi_encoder_mode_valid()`), see `docs/pending/htotal-hdmi.md`. (A
+  guess that a changed htotal broke 1366x768 on the LG 19EN43 was tested and is
+  wrong: it still fails with the exact htotal.)
 - **No hotplug uevent before `drm_dev_register()`**: the core dereferences the
   minor's device, which does not exist yet (`registered` flag in
   `fl2000_drm.c`). The VGA encoder is created after `component_bind_all()`
@@ -241,10 +241,11 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **Odd line widths** (1366 px, 854 px) were scrambled by the per-line 64-bit
-   half swap, and the shadow-frame rework brought the bug back. Fixed again
-   with frame offsets and checked in userspace (`scripts/test-frame-layout.py`);
-   1366x768 has still to be seen working on the LG 19EN43 over VGA.
+7. **1366x768 and 1360x768 do not work on VGA** with the LG 19EN43 (1366x768
+   panel): black screen and a mostly garbled/black picture, while 1024x768,
+   1280x720, 1280x800 and 1280x768 are fine. The per-line word swap was fixed
+   (`scripts/test-frame-layout.py`) but that was not the cause; the rejected
+   theories and what is left to try are in `docs/DEVELOPMENT.md`, "VGA output".
 8. **Upstream review items still open** (done: simple pipe removed, shadow
    plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable):
    - `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`. Blocked for

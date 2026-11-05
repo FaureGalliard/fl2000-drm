@@ -73,19 +73,41 @@ encoders being clones of each other. Measured on the real adapter with
   periodic detection colliding with the read (`fl2000-reg.py edid-quiet`), a
   monitor that only answers DDC for a short while after the cable is plugged
   (`edid-wait`), or DDC not wired in that cable.
-- **The pixel clock of VGA modes must be close, and htotal must stay exact.**
-  The PLL search had a loop meant to stretch htotal by a few pixels until the
-  clock landed on a PLL setting, which never ran (the sign started at 0). A first
-  fix enabled it for VGA, and the test monitor then showed nothing at 1366x768
-  and half a picture at 1360x768 (both programmed with htotal 1791 instead of
-  1792), while 1024x768, with the exact htotal, worked: an analog monitor derives
-  its sampling clock from the line length it expects. The loop is gone. Without
-  touching htotal the PLL makes 85.454 MHz for the 85.5 MHz modes (531 ppm, 59.76
-  Hz instead of 59.79 Hz), so the clock error accepted on VGA is 5000 ppm
-  (`FL2000_PPM_ERR_MAX_VGA`), as Samuv5's driver does, and digital sinks keep the
-  500 ppm they always had (`fl2000_hdmi_encoder_mode_valid()`); for 1200 of 1200
-  random modes the HDMI result is identical to the old code. 1280x1024@60,
-  1440x900@60 and 1366x768@60 become available on VGA.
+- **PLL search**: it had a loop meant to stretch htotal by a few pixels until the
+  clock landed on a PLL setting, which never ran (the sign started at 0). It is
+  gone: only the pixel clock moves, by up to 5000 ppm on VGA
+  (`FL2000_PPM_ERR_MAX_VGA`, as Samuv5's driver does) and 500 ppm for digital
+  sinks (`fl2000_hdmi_encoder_mode_valid()`, identical to the old behaviour for
+  1200 of 1200 random modes). 85.5 MHz modes get 85.454 MHz (531 ppm off).
+- **Hardware results with the LG 19EN43 (1366x768 panel, no readable EDID)**, new
+  module, session of 5 Nov 2026:
+  - Work: 1024x768, 1280x720, 1280x800, 1280x768 (colours normal; the washed-out
+    look seen while GNOME asks "keep changes?" is the dim layer of that dialog,
+    it goes away on Keep).
+  - "Out of range" on the monitor: 1440x900, 1280x1024, 1600x900. Expected: they
+    exceed the panel.
+  - **1366x768: plain black screen, no OSD message. 1360x768: most of the screen
+    garbled or black.** The chip is fine: `fl2000-reg.py diag` counts 59.5 Hz
+    against 59.76 programmed, PLL and timings as computed, and the timings equal
+    the vendor's table entry (htotal 1792x798, hsync 143, hstart 357, vstart 28);
+    only the vendor's pixel clock differs (85.83 MHz, 60.02 Hz).
+  - **Rejected by `fl2000-reg.py sweep` on the running 1366x768 mode** (all six
+    variants stayed black): the four combinations of the sync polarity bits
+    (0x8004 bits 2/3) and the vendor's pixel clock with two polarities. An exact
+    htotal does not help either (the previous module changed it, this one does
+    not). The monitor was also reported to need CRU on Windows.
+  - Untested ideas: the widths that work are multiples of 64 pixels (1024, 1280)
+    and the failing ones are not (1360 = 42.5 x 32, 1366 not even a multiple of 8),
+    so the chip or the stream may need line or frame padding for such widths
+    (the frame of 1366x768 is not a multiple of 1024 bytes either); the
+    colour-bar test from a TTY (`FL2000_TEST_MODE='#13'`, `'#14'`, `'#15'`)
+    separates GNOME's framebuffer path from the driver and the monitor; CVT or
+    reduced-blanking timings (`video=VGA-1:1366x768MR@60e`).
+  - At 1366 pixels one full-frame conversion takes ~78 ms instead of ~5 ms: the
+    line of 5464 bytes is not a multiple of 16, so `drm_memcpy_from_wc()` falls
+    back to `memcpy_fromio()`. Not the cause of the black screen; still to fix.
+  - The EDID at 0x50 returns I2C status 15 (NAK) at offset 0 (once at offset 4);
+    `edid-quiet`, `edid-wait` and a replug of the USB did not change it.
 - **Odd line widths were scrambled** at the native 1366x768 of that monitor: the
   converters swapped the 32-bit halves of the 64-bit words from the start of
   each *line*, which is only right when a line is a multiple of 8 bytes (4098
