@@ -11,6 +11,7 @@
 #   sudo python3 scripts/fl2000-reg.py watch           print status changes
 #   sudo python3 scripts/fl2000-reg.py edid [file]     read the monitor EDID at 0x50
 #   sudo python3 scripts/fl2000-reg.py edid-wait [file]  retry for 60 s while you replug the cable
+#   sudo python3 scripts/fl2000-reg.py edid-quiet [file] edid with the chip's own EDID/monitor detection off
 #   sudo python3 scripts/fl2000-reg.py read 0x803c
 #   sudo python3 scripts/fl2000-reg.py write 0x803c 0x0
 #   sudo python3 scripts/fl2000-reg.py set 0x802c 26   set bit 26
@@ -137,10 +138,13 @@ def decode(val, fields):
 I2C_SC, I2C_RD = 0x8020, 0x8024
 
 
-def i2c_read_dword(dev, addr, offset):
-    # Same sequence as fl2000_i2c_dword() in the driver (read case)
+def i2c_read_dword(dev, addr, offset, detect=True):
+    # Same sequence as fl2000_i2c_dword() in the driver (read case). With detect=False the
+    # chip's periodic EDID and monitor detection bits are left off for the read.
     mask = (1 << 28) | (1 << 30) | (0xF << 24) | 0x7F | (1 << 7) | (0xFF << 8) | (1 << 31)
-    val = (1 << 28) | (1 << 30) | (addr & 0x7F) | (1 << 7) | ((offset & 0xFF) << 8)
+    val = (addr & 0x7F) | (1 << 7) | ((offset & 0xFF) << 8)
+    if detect:
+        val |= (1 << 28) | (1 << 30)
     dev.write(I2C_SC, (dev.read(I2C_SC) & ~mask) | val)
     deadline = time.time() + 1.0
     while True:
@@ -155,10 +159,10 @@ def i2c_read_dword(dev, addr, offset):
     return dev.read(I2C_RD)
 
 
-def read_edid(dev):
+def read_edid(dev, detect=True):
     data = bytearray()
     for off in range(0, 128, 4):
-        data += struct.pack("<I", i2c_read_dword(dev, 0x50, off))
+        data += struct.pack("<I", i2c_read_dword(dev, 0x50, off, detect))
     return bytes(data)
 
 
@@ -200,7 +204,7 @@ def main():
     if cmd == "status":
         for name in ("STATUS", "PXCLK", "I2C_SC", "PLL", "ACLK", "CTRL2"):
             show(dev, name)
-    elif cmd in ("edid", "edid-wait"):
+    elif cmd in ("edid", "edid-wait", "edid-quiet"):
         deadline = time.time() + (60 if cmd == "edid-wait" else 0)
         if cmd == "edid-wait":
             print("Waiting up to 60 s: unplug and replug the VGA cable now", flush=True)
@@ -208,10 +212,10 @@ def main():
         while True:
             st = dev.read(REGS["STATUS"][0])
             try:
-                data = read_edid(dev)
+                data = read_edid(dev, detect=cmd != "edid-quiet")
                 break
             except OSError as e:
-                if cmd == "edid" or time.time() > deadline:
+                if cmd != "edid-wait" or time.time() > deadline:
                     sys.exit("no EDID: %s (MONITOR_STATUS=%d EDID_STATUS=%d)" %
                              (e, (st >> 29) & 1, (st >> 28) & 1))
                 msg = "no EDID: %s (MONITOR_STATUS=%d EDID_STATUS=%d)" % (
