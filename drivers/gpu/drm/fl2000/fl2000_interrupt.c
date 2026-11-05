@@ -141,6 +141,20 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	return intr;
 }
 
+/**
+ * fl2000_intr_quiesce() - stop reporting hotplug events
+ * @intr: interrupt context
+ *
+ * Called before the DRM device is unplugged: an event raised after that would
+ * announce a change on a node that was just removed, and probing the connector
+ * would talk to hardware that is already gone.
+ */
+void fl2000_intr_quiesce(struct fl2000_intr *intr)
+{
+	usb_poison_urb(intr->urb);
+	cancel_work_sync(&intr->work);
+}
+
 void fl2000_intr_destroy(struct usb_device *usb_dev)
 {
 	devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);

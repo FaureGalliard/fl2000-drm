@@ -134,6 +134,7 @@ void fl2000_stream_disable(struct fl2000_stream *stream);
 /* Interrupt polling task */
 struct fl2000_intr;
 struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_device *drm);
+void fl2000_intr_quiesce(struct fl2000_intr *intr);
 void fl2000_intr_destroy(struct usb_device *usb_dev);
 
 /* I2C adapter interface creation */

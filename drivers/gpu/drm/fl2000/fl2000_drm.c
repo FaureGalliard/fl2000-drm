@@ -571,6 +571,9 @@ static void fl2000_drm_if_release(struct device *dev, void *res)
 
 	dev_dbg(dev, "Unbinding FL2000 master\n");
 
+	/* No hotplug events for a node that is about to disappear */
+	fl2000_intr_quiesce(drm_if->intr);
+
 	/*
 	 * Block userspace access and shut down the display pipeline while all
 	 * the components are still bound.
