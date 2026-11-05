@@ -21,6 +21,14 @@ iniciar sesión; con la sesión abierta depende de Mutter (issue #710, sin
 arreglo). Pendiente: repetir `scripts/fl2000-field-test.sh` en un arranque
 limpio con el kernel actual, decidir el `Assisted-by:` y hablar con klogg.
 
+**Actualización del 5 de noviembre (tarde):** se añadió la salida VGA
+(`fl2000_vga.c`, parche 4), se corrigió el intercambio de palabras del fotograma
+para anchos como 1366 px y se amplió la carta. El código compila sin avisos con
+`W=1` y `sparse` (`C=2`) sobre 7.4-rc1 con los fuentes nuevos, pero la serie de
+`outgoing/` es anterior: hay que **regenerarla** (la genera quien envía, por el
+`Signed-off-by`) y repetir `CHECK_BUILD=1`. Nada de esto se ha probado todavía en
+el adaptador con el módulo nuevo: probar HDMI y VGA antes de enviar.
+
 El código compila sin warnings (`W=1`) y pasa `checkpatch --strict`, pero los
 cambios de esta preparación **no se han probado en el adaptador**. Antes de
 enviar hay que confirmar en el hardware real:

@@ -11,7 +11,8 @@ USB 3.0 ──▶ FL2000DX ──┬── I²C master (regmap over USB control 
                        │        ├── IT66121 HDMI bridge  @ 0x4C
                        │        └── monitor DDC/EDID     @ 0x50   ← EDID comes from here
                        │
-                       ├── bulk EP1 OUT ── pixel stream ──▶ IT66121 ──▶ HDMI
+                       ├── bulk EP1 OUT ── pixel stream ──┬──▶ IT66121 ──▶ HDMI
+                       │                                  └──▶ DAC ───────▶ VGA (DDC at 0x50)
                        │
                        ├── interrupt EP3 ── HPD / status events
                        │
@@ -37,6 +38,61 @@ Two things about this topology are counter-intuitive and cost a lot of time:
    (`1d5c:2000:i`) is not optional — see the README troubleshooting section, and
    note that `usb_storage` loads from the initramfs, so `mkinitcpio -P` is
    required after creating the modprobe.d file.
+
+## VGA output (November 2026)
+
+The UGREEN dongle has an HDMI and a VGA connector; the chip's DAC drives the
+VGA one from the same pixel stream. `fl2000_vga.c` adds a `DRM_MODE_ENCODER_DAC`
+encoder and a `DRM_MODE_CONNECTOR_VGA` connector on the one CRTC, the two
+encoders being clones of each other. Measured on the real adapter with
+`scripts/fl2000-reg.py` and an LG 19EN43 (1366x768, old, flaky EDID):
+
+- **Status register 0x8000 bit 29 (`MONITOR_STATUS`) follows the VGA cable**
+  (0x280000c1 with the cable, 0x08000000 without), and the chip powers its PLL
+  and DAC by itself while it is set (ACLK bit 31, `PLL_DAC_PD_NOVGA_EN`, is set
+  at reset): no power bit has to be written. Bit 27 (`HDMI_STATUS`) is a board
+  strap and reads 1 with nothing on HDMI. Other boards' reports differ: on an
+  HDMI-only board bit 29 follows the HDMI sink, on a VGA-only dongle it never
+  moved. So there is **one monitor sense input**, and the connector logic is
+  "sensed and the IT66121 hot plug line is low" = a VGA monitor. A monitor on
+  VGA is therefore not reported while one is on HDMI; `video=VGA-1:e` forces it
+  for clone mode.
+- Driving only VGA with `FORCE_VGA_CONNECT` (ACLK bit 25) set would hide the
+  cable being unplugged, so it is only set while the HDMI encoder is active and
+  cleared when the CRTC is disabled. HDMI has always run with it set.
+- Reading 0x8000 clears its event bits. Everything that reads it goes through
+  `fl2000_intr_read_status()`, which latches the events until the interrupt work
+  reports them; `scripts/fl2000-reg.py watch` steals events while it runs.
+- **The EDID of the LG monitor cannot be read at 0x50** (I²C status 15, NAK)
+  even while the chip's own EDID detector reports a monitor (status bit 28) and
+  an image is shown. Old monitors often have no usable EDID; Windows needed
+  Custom Resolution Utility for it. Without an EDID the standard timings are
+  offered with 1024x768 as the default. Native modes can be forced with
+  `video=VGA-1:1366x768@60e` or replaced with `drm.edid_firmware=VGA-1:edid/x.bin`
+  (the same job CRU does on Windows). Untested ideas for the NAK: the chip's
+  periodic detection colliding with the read (`fl2000-reg.py edid-quiet`), a
+  monitor that only answers DDC for a short while after the cable is plugged
+  (`edid-wait`), or DDC not wired in that cable.
+- **The htotal adjustment of the PLL search never ran** (the sign started at 0),
+  so modes such as 1366x768@60 (85.5 MHz), 1280x1024@60 and 1440x900@60 were
+  rejected. It is fixed, but only the VGA output may use it: digital sinks are
+  offered only the modes the PLL hits with the standard timings
+  (`fl2000_hdmi_encoder_mode_valid()`), which for 1500 of 1500 random modes is
+  identical to the old behaviour. With it on HDMI the 1080p60 mode (148.5 MHz)
+  would become valid and be programmed with htotal 2198 instead of 2200, which
+  needs an HDMI monitor to check; see `docs/pending/htotal-hdmi.md`.
+- **Odd line widths were scrambled** at the native 1366x768 of that monitor: the
+  converters swapped the 32-bit halves of the 64-bit words from the start of
+  each *line*, which is only right when a line is a multiple of 8 bytes (4098
+  bytes at 1366 pixels). The swap now follows the offset in the frame, and
+  `scripts/test-frame-layout.py` checks the real functions against an
+  independent conversion (about half the bytes were wrong at 1366 and 854).
+
+Known limits: adapters with only a VGA connector and no IT66121 are not
+supported (the driver needs the bridge to bind); the DAC pixel clock is capped
+at 165 MHz by policy since there is no datasheet; the polarity of the sync
+bits (0x8004 bits 2/3) is never programmed (they reset to 1) and may matter to
+very old monitors.
 
 ## Decoding the driver's DDC messages
 
@@ -77,6 +133,7 @@ found. All are fixed.
 | After an unplug the dongle never enumerates again (`usb_hub_wq` stuck in `i2c_del_adapter()`) | The DRM device was a child of the I2C adapter and so held a reference on it, while `i2c_del_adapter()` waits for all references. The DRM device is now a child of the USB device and `drm_dev_put()` is explicit in `fl2000_drm_if_release()` |
 | After a monitor/cable cycle the connector only offers modes up to 1024x768 and an empty EDID | The EDID was cached in the bridge and only handed to the connector the first time; the DRM core drops it when the connector goes through `disconnected`. It is now handed to the connector on every probe and read again only after HPD reported no monitor (reading it on every probe stalled the compositor for ~1 s per probe), starting with the DDC path that worked last time |
 | With Mutter 51 the desktop stalls after ~30 min: `amdgpu_dm_plane_helper_prepare_fb ... bind failed`, page flips fail with ENOSPC | Mutter renders ARGB2101010 and tries to scan that buffer out on our plane; AddFB2 failed with EINVAL (`Zero-copy disabled ... format=AR30`) because only XRGB8888 was advertised, so Mutter used its primary-GPU copy path (Mutter issue #5101, a dma-buf leaked per frame) until amdgpu's GTT was full. XRGB2101010/ARGB2101010 are now accepted and converted to 8 bits per channel; needs a long-run check of `mem_info_gtt_used` |
+| Image scrambled or skewed at widths such as 1366 or 854 (1920, 1024 and 1360 fine) | The 64-bit word swap of the frame was applied per line; see the VGA section. Fixed with frame offsets |
 | Display torn down ~30 s after every plug | SCSI timeout on the virtual CD → `usb_reset_device()` on the whole dongle |
 | Driver never re-binds after a USB reset | Probe bailed out with `-ENODEV` because the bridge had been destroyed on disconnect while `devs` survived |
 | `modprobe` appears to freeze the terminal | Probe runs synchronously in modprobe context while the device is stuck in the reset cycle; not a driver hang. Load the module with the adapter unplugged, then plug it (probe runs in a udev worker) |

@@ -24,6 +24,12 @@ This is a modernized version of the FL2000 DRM driver, updated to work with Linu
 | Device | Chipset | Max Resolution |
 |--------|---------|----------------|
 | USB HDMI Dongle | FL2000DX + IT66121FN | 4K@30Hz (USB 3.0), 1080p@60Hz |
+| USB HDMI + VGA Dongle (e.g. UGREEN) | FL2000DX + IT66121FN | HDMI as above; VGA up to 165 MHz pixel clock |
+
+Adapters that only have a VGA connector (no IT66121) are not supported yet. On
+the VGA output, monitors without a usable EDID get the standard timings with
+1024x768 as the default; force another mode with `video=VGA-1:1366x768@60e` on
+the kernel command line.
 
 - **USB 2.0**: Up to 1080p@30Hz
 - **USB 3.0**: Up to 4K@30Hz or 1080p@60Hz

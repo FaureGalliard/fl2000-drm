@@ -29,6 +29,14 @@ buffers). Clean boot, desktop and cursor on the external monitor, no
 while dragging, ~9 ms per full-frame conversion, RGB888. If something
 regresses, bisect `git log --oneline 9216213..`.
 
+Since then (3-5 Nov 2026, kernel 7.2.11, Mutter 51.1): unplug no longer hangs
+the machine, the 10-bit scanout formats Mutter renders in are accepted, the
+DRM device hangs off the USB device, the EDID is cached per connection, and the
+analog VGA output of the UGREEN dongle was added (it showed a stable GNOME
+desktop through the HDMI connector forced on, before the VGA connector existed).
+The upstream series was regenerated on drm-misc-next 7.4-rc1 and built per
+patch before the VGA work; regenerate it again (`docs/UPSTREAMING.md`).
+
 The race is on: klogg, rhgndf (Jie Feng), Samuv5 and vfox888 all have active
 FL2000 drivers (`docs/COMPARISON.md`). The goal of this fork is to follow the
 newest kernel API so it is the one maintainers can take.
@@ -163,12 +171,41 @@ that). Leave the dongle unplugged ~10 s first and verify with
   in ~8 ms. Refusing imports instead pushes mutter onto a CPU copy path that
   leaked ~1.7 GB/min of GTT until the whole desktop stalled. On cached RAM a
   plain memcpy is faster, so `fl2000_read_span()` chooses per source.
+- **The word swap of the frame follows the offset in the FRAME, never in the
+  line.** The FL2000 wants the 32-bit halves of every 64-bit word of the flat
+  frame swapped; a line only starts on a word boundary when its length is a
+  multiple of 8 bytes (1366 px at 3 bytes is 4098: half the bytes were wrong).
+  Converters and the cursor blend take the frame base plus the line offset, and
+  `fl2000_copy_rect()` copies whole words. `scripts/test-frame-layout.py` checks
+  the real functions; run it after touching `fl2000_streaming.c`.
+- **Reading status register 0x8000 clears its event bits**, so every read goes
+  through `fl2000_intr_read_status()`, which latches them until the interrupt
+  work reports them. Do not read the register anywhere else, and note that
+  `scripts/fl2000-reg.py watch` steals events while it runs.
+- **`FORCE_VGA_CONNECT` (ACLK bit 25) is only set while the HDMI encoder is
+  active** and is cleared when the CRTC is disabled: set while driving VGA it
+  hides the cable being unplugged and VGA detection would never see it go.
+- **The htotal adjustment is for VGA only.** HDMI keeps the exact timings
+  (`fl2000_hdmi_encoder_mode_valid()`); `docs/pending/htotal-hdmi.md` says what
+  lifting that would change and how.
+- **No hotplug uevent before `drm_dev_register()`**: the core dereferences the
+  minor's device, which does not exist yet (`registered` flag in
+  `fl2000_drm.c`). The VGA encoder is created after `component_bind_all()`
+  because the IT66121 attaches to the first encoder, which must be the HDMI one.
 - **Register fields are `GENMASK()`/`FIELD_PREP()`**, never C bitfields
   (implementation-defined layout; one bitfield union silently read the wrong
   byte for years, see `docs/DEVELOPMENT.md`).
 
 ## Open issues
 
+0. **VGA output** (new, 5 Nov 2026, not yet tested with the driver on hardware):
+   the code is in `fl2000_vga.c`, see `docs/DEVELOPMENT.md`, "VGA output". To
+   check: the connector appears and is `connected` by itself with the VGA monitor
+   on and nothing on HDMI; `scripts/fl2000-field-test.sh` shows colour bars at
+   1024x768 and with `FL2000_TEST_MODE=1366x768`; unplugging the VGA cable makes
+   it `disconnected` (and the HDMI connector keeps working when the adapter is
+   used with an HDMI monitor, which has to be re-checked after this change).
+   VGA-only adapters without an IT66121 are not supported.
 1. **Hot replug.** Unplug and replug are clean in the kernel, the colour-bar
    test works afterwards (`docs/field-test-15_04.log`). Under GNOME the result
    depends on the DRM node number: with Mutter 51.1 a replug that gets a new
@@ -191,20 +228,21 @@ that). Leave the dongle unplugged ~10 s first and verify with
    other board wirings may need it).
 4. `sysfs` `edid` file has read empty while the connector property blob was
    populated. Unexplained, cosmetic so far.
-5. **htotal adjustment never ran** (`s = 0` in the `fl2000_mode_calc()` loop):
-   modes the PLL cannot hit exactly are rejected, which is why 1920x1080@60.00
-   is unavailable and 59.94 Hz is used. The fix is ready in
-   `docs/pending/0001-fix-actually-try-the-htotal-adjustments-when-searchi.patch`
-   but changes the mode the monitor gets, so apply it only with the hardware
-   at hand.
+5. **htotal adjustment on HDMI.** The search never adjusted anything (`s = 0`
+   in the `fl2000_mode_calc()` loop); fixed, and used by the VGA output only.
+   HDMI still offers just the modes the PLL hits exactly, which is why
+   1920x1080@60.00 is unavailable and 59.94 Hz is used. Allowing it on HDMI
+   changes the mode the monitor gets (htotal 2198): see
+   `docs/pending/htotal-hdmi.md` and test it with an HDMI monitor at hand.
 6. **USB bandwidth check is a no-op**: `fl2000_get_bytes_pix()` gets the
    pixel clock in kHz but treats it as Hz (and the 80 % margin is inverted),
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **Odd line widths** (1366 px) were scrambled by the per-line 64-bit half
-   swap; fixed by the move to the format helpers + whole-buffer swap, but a
-   1366x768 mode has never been checked on hardware.
+7. **Odd line widths** (1366 px, 854 px) were scrambled by the per-line 64-bit
+   half swap, and the shadow-frame rework brought the bug back. Fixed again
+   with frame offsets and checked in userspace (`scripts/test-frame-layout.py`);
+   1366x768 has still to be seen working on the LG 19EN43 over VGA.
 8. **Upstream review items still open** (done: simple pipe removed, shadow
    plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable):
    - `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`. Blocked for

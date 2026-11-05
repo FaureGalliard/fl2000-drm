@@ -11,7 +11,7 @@ salen de leer el código de cada repositorio en esa fecha.
 | Tamaño (C) | ~3.500 líneas | ~11.300 (incluye helpers del kernel copiados) | ~3.900 | ~3.050 | ~1.650 (un solo archivo) |
 | Kernel objetivo | **7.1 y master (7.4)** | 7.0 | 7.2 | 7.2, 7.0, 6.18 | 7.0 |
 | HDMI (IT66121) probado en hardware | **sí**, UGREEN + LG 1080p | sí, un adaptador, vía QEMU/KVM | no indicado | **no** (según su README) | sí, Hagibis, 1080p50–75 |
-| VGA | no | no | **sí** | **sí** (detección por carga) | no |
+| VGA | **sí**, junto al HDMI (nov-2026) | no | **sí** | **sí** (detección por carga) | no |
 | EDID por el bus I²C del FL2000 (0x50) | **sí** (desde jul-2026) | no (solo DDC del IT66121) | conector VGA con DDC | no | **sí** (desde oct-2026) |
 | `simple_display_pipe` (obsoleto) | quitado | quitado | quitado | no lo usa | no lo usa |
 | Bridge sin conector (`ATTACH_NO_CONNECTOR`) | no | sí | sí | — | — |
@@ -50,14 +50,17 @@ salen de leer el código de cada repositorio en esa fecha.
 2. ~~`drm_fb_xrgb8888_to_rgb888/565()` + intercambio de palabras sobre el
    búfer completo~~ **hecho** (idea del commit "Fix fl2000 specific dword
    ordering" de rhgndf). Arregla el bug de anchos raros, como 1366 px.
-3. **El arreglo del signo en el ajuste de htotal**: rhgndf lo encontró, y aquí
-   está en `docs/pending/`.
+3. ~~**El arreglo del signo en el ajuste de htotal**~~ **hecho para VGA**
+   (rhgndf lo encontró); en HDMI queda pendiente de probar con un monitor, ver
+   `docs/pending/htotal-hdmi.md`.
 4. **Bridge con `DRM_BRIDGE_ATTACH_NO_CONNECTOR` + `drm_bridge_connector`**.
    El EDID del bus del FL2000 se puede ofrecer por `.edid_read` del bridge.
 5. **Una sola interfaz con `usb_driver_claim_interface()`**, el dispositivo DRM
    colgado de la interfaz USB y `drm_dev_set_dma_dev()`.
 6. ~~fbdev~~ **hecho**; faltan **suspend/resume y RGB565 por ancho de banda**.
-7. **VGA** (rhgndf, Samuv5): amplía el hardware soportado.
+7. ~~**VGA** (rhgndf, Samuv5)~~ **hecho** junto al HDMI (conector VGA propio
+   con codificador DAC en la misma CRTC); faltan los adaptadores solo-VGA, sin
+   IT66121.
 
 ## Atribución
 
