@@ -301,22 +301,29 @@ static void fl2000_stream_data_completion(struct urb *urb)
 }
 
 /*
+ * Frame layout. The FL2000 expects the two 32-bit halves of every 64-bit word
+ * of the frame swapped, and the frame is one flat stream: a line does not start
+ * on a word boundary unless its length is a multiple of 8 bytes (1366 pixels at
+ * 3 bytes per pixel is 4098). Every writer below therefore applies the swizzle
+ * ('^ 4' on bytes for 24bpp, '^ 2' on 16-bit words for 16bpp) to the offset
+ * from the start of the FRAME, which is why they take the frame base and the
+ * offset of the line in it, never a pointer to the line.
+ *
  * Cursor compositing. The sprite is blended into each outgoing frame rather
  * than into the shadow, so moving the pointer costs one 64x64 blend and never
  * re-reads the source framebuffer.
- *
- * The writers index the destination with the same swizzles the converters use
- * ('^ 4' for 24bpp bytes, '^ 2' for 16bpp words), which are relative to the
- * start of the scanline, so the x coordinates here must stay absolute.
  */
 static inline u8 fl2000_blend_channel(u8 dst, u8 src, u8 alpha)
 {
 	return (u8)((src * alpha + dst * (255 - alpha) + 127) / 255);
 }
 
-static void fl2000_blend_cursor_rgb565_line(u16 *dbuf, const u32 *cbuf, u32 x_start, u32 x_end)
+/* 'line' is the offset of the line in the frame, in 16-bit words */
+static void fl2000_blend_cursor_rgb565_line(u16 *frame, size_t line, const u32 *cbuf, u32 x_start,
+					    u32 x_end)
 {
 	for (unsigned int x = x_start; x < x_end; x++) {
+		size_t idx = (line + x) ^ 2;
 		u32 pix = *cbuf++;
 		u8 alpha = (u8)(pix >> 24);
 		u16 dst;
@@ -326,7 +333,7 @@ static void fl2000_blend_cursor_rgb565_line(u16 *dbuf, const u32 *cbuf, u32 x_st
 			continue;
 
 		/* Expand the destination to 8 bits per channel, blend, pack again */
-		dst = dbuf[x ^ 2];
+		dst = frame[idx];
 		r = (u8)(((dst & 0xF800) >> 8) | ((dst & 0xF800) >> 13));
 		g = (u8)(((dst & 0x07E0) >> 3) | ((dst & 0x07E0) >> 9));
 		b = (u8)(((dst & 0x001F) << 3) | ((dst & 0x001F) >> 2));
@@ -335,13 +342,15 @@ static void fl2000_blend_cursor_rgb565_line(u16 *dbuf, const u32 *cbuf, u32 x_st
 		g = fl2000_blend_channel(g, (u8)(pix >> 8), alpha);
 		b = fl2000_blend_channel(b, (u8)pix, alpha);
 
-		dbuf[x ^ 2] = (u16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+		frame[idx] = (u16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
 	}
 }
 
-static void fl2000_blend_cursor_rgb888_line(u8 *dbuf, const u32 *cbuf, u32 x_start, u32 x_end)
+/* 'line' is the offset of the line in the frame, in bytes */
+static void fl2000_blend_cursor_rgb888_line(u8 *frame, size_t line, const u32 *cbuf, u32 x_start,
+					    u32 x_end)
 {
-	unsigned int xx = x_start * 3;
+	size_t xx = line + (size_t)x_start * 3;
 
 	for (unsigned int x = x_start; x < x_end; x++) {
 		u32 pix = *cbuf++;
@@ -353,11 +362,11 @@ static void fl2000_blend_cursor_rgb888_line(u8 *dbuf, const u32 *cbuf, u32 x_sta
 		}
 
 		/* Read and write through the swizzle */
-		dbuf[xx ^ 4] = fl2000_blend_channel(dbuf[xx ^ 4], (u8)pix, alpha);
+		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)pix, alpha);
 		xx++;
-		dbuf[xx ^ 4] = fl2000_blend_channel(dbuf[xx ^ 4], (u8)(pix >> 8), alpha);
+		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)(pix >> 8), alpha);
 		xx++;
-		dbuf[xx ^ 4] = fl2000_blend_channel(dbuf[xx ^ 4], (u8)(pix >> 16), alpha);
+		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)(pix >> 16), alpha);
 		xx++;
 	}
 }
@@ -390,16 +399,21 @@ static void fl2000_blend_cursor(struct fl2000_stream *stream, void *dst, struct 
 		const u32 *cline = stream->cursor_argb +
 				   (size_t)(y - stream->cursor_y) * stream->cursor_w +
 				   (cx_start - stream->cursor_x);
-		void *dline = dst + (size_t)y * dst_line_len;
 
 		if (stream->bytes_pix == 2)
-			fl2000_blend_cursor_rgb565_line(dline, cline, cx_start, cx_end);
+			fl2000_blend_cursor_rgb565_line(dst, (size_t)y * stream->width, cline,
+							cx_start, cx_end);
 		else if (stream->bytes_pix == 3)
-			fl2000_blend_cursor_rgb888_line(dline, cline, cx_start, cx_end);
+			fl2000_blend_cursor_rgb888_line(dst, (size_t)y * dst_line_len, cline,
+							cx_start, cx_end);
 	}
 }
 
-/* Copy one rectangle of the shadow into an outgoing buffer */
+/*
+ * Copy one rectangle of the shadow into an outgoing buffer. The pixels of a
+ * line sit in 64-bit words whose halves are swapped, so a pixel's bytes can lie
+ * up to 4 bytes outside the plain byte range of the pixel: copy whole words.
+ */
 static void fl2000_copy_rect(struct fl2000_stream *stream, void *dst, const struct drm_rect *r)
 {
 	u32 line_len = stream->width * stream->bytes_pix;
@@ -421,9 +435,11 @@ static void fl2000_copy_rect(struct fl2000_stream *stream, void *dst, const stru
 	span = (size_t)(x2 - x1) * stream->bytes_pix;
 
 	for (int y = y1; y < y2; y++) {
-		size_t line = (size_t)y * line_len + off;
+		size_t start = round_down((size_t)y * line_len + off, 8);
+		size_t end = min_t(size_t, round_up((size_t)y * line_len + off + span, 8),
+				   stream->buf_size);
 
-		memcpy(dst + line, stream->shadow + line, span);
+		memcpy(dst + start, stream->shadow + start, end - start);
 	}
 }
 
@@ -583,32 +599,33 @@ static void fl2000_stream_work(struct work_struct *work)
 }
 
 /*
- * The FL2000 expects the two 32-bit halves of every 64-bit word of the frame
- * swapped. The converters write through that swizzle directly ('^ 4' on bytes,
- * '^ 2' on 16-bit words), indexed from the start of the scanline, so 'dbuf' is
- * the start of the destination line and the x range is absolute. 'sbuf' points
- * at the first pixel of the span in the staging line.
+ * The converters write through the frame swizzle described above. 'frame' is
+ * the start of the destination frame, 'line' the offset of the destination line
+ * in it (in bytes for 24bpp, in 16-bit words for 16bpp) and the x range is
+ * absolute. 'sbuf' points at the first pixel of the span in the staging line.
  */
-static void fl2000_xrgb8888_to_rgb888_line(u8 *dbuf, const u32 *sbuf, u32 x_start, u32 x_end)
+static void fl2000_xrgb8888_to_rgb888_line(u8 *frame, size_t line, const u32 *sbuf, u32 x_start,
+					   u32 x_end)
 {
-	unsigned int xx = x_start * 3;
+	size_t xx = line + (size_t)x_start * 3;
 
 	for (unsigned int x = x_start; x < x_end; x++) {
 		u32 pix = *sbuf++;
 
-		dbuf[xx++ ^ 4] = (pix & 0x000000FF) >> 0;
-		dbuf[xx++ ^ 4] = (pix & 0x0000FF00) >> 8;
-		dbuf[xx++ ^ 4] = (pix & 0x00FF0000) >> 16;
+		frame[xx++ ^ 4] = (pix & 0x000000FF) >> 0;
+		frame[xx++ ^ 4] = (pix & 0x0000FF00) >> 8;
+		frame[xx++ ^ 4] = (pix & 0x00FF0000) >> 16;
 	}
 }
 
-static void fl2000_xrgb8888_to_rgb565_line(u16 *dbuf, const u32 *sbuf, u32 x_start, u32 x_end)
+static void fl2000_xrgb8888_to_rgb565_line(u16 *frame, size_t line, const u32 *sbuf, u32 x_start,
+					   u32 x_end)
 {
 	for (unsigned int x = x_start; x < x_end; x++) {
 		u32 pix = *sbuf++;
 
-		dbuf[x ^ 2] = ((pix & 0x00F80000) >> 8) | ((pix & 0x0000FC00) >> 5) |
-			      ((pix & 0x000000F8) >> 3);
+		frame[(line + x) ^ 2] = ((pix & 0x00F80000) >> 8) | ((pix & 0x0000FC00) >> 5) |
+					((pix & 0x000000F8) >> 3);
 	}
 }
 
@@ -661,7 +678,6 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 			    u32 format, unsigned int width, unsigned int height,
 			    unsigned int pitch, const struct drm_rect *clip)
 {
-	void *dst;
 	u32 dst_line_len;
 	u32 x_start, x_end, y_start, y_end;
 	size_t span;
@@ -687,7 +703,6 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 	x_end = min(ALIGN(x_end, 4), width);
 
 	dst_line_len = width * stream->bytes_pix;
-	dst = stream->shadow + (size_t)y_start * dst_line_len;
 	span = (x_end - x_start) * sizeof(u32);
 
 	for (unsigned int y = y_start; y < y_end; y++) {
@@ -704,16 +719,17 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 
 		switch (stream->bytes_pix) {
 		case 2:
-			fl2000_xrgb8888_to_rgb565_line(dst, stream->line_buf, x_start, x_end);
+			fl2000_xrgb8888_to_rgb565_line(stream->shadow, (size_t)y * width,
+						       stream->line_buf, x_start, x_end);
 			break;
 		case 3:
-			fl2000_xrgb8888_to_rgb888_line(dst, stream->line_buf, x_start, x_end);
+			fl2000_xrgb8888_to_rgb888_line(stream->shadow, (size_t)y * dst_line_len,
+						       stream->line_buf, x_start, x_end);
 			break;
 		default:
 			/* Rejected by fl2000_get_bytes_pix() */
 			break;
 		}
-		dst += dst_line_len;
 	}
 
 	stream->shadow_seq++;
