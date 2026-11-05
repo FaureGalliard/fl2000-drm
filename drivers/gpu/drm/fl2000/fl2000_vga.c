@@ -58,8 +58,17 @@ static enum drm_connector_status fl2000_vga_sense(struct fl2000_vga *vga)
 	if (!ret)
 		return connector_status_disconnected;
 
-	if (vga->hdmi_bridge && it66121_hpd_connected(vga->hdmi_bridge))
-		return connector_status_disconnected;
+	if (vga->hdmi_bridge) {
+		/*
+		 * Not knowing whether there is an HDMI sink is not the same as there being none:
+		 * two connected outputs on the one CRTC can leave a compositor with neither.
+		 */
+		ret = it66121_hpd_connected(vga->hdmi_bridge);
+		if (ret < 0)
+			return connector_status_unknown;
+		if (ret)
+			return connector_status_disconnected;
+	}
 
 	return connector_status_connected;
 }

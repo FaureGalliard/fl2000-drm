@@ -300,14 +300,20 @@ static void it66121_is_hpd_detect(struct it66121_priv *priv)
  * it66121_hpd_connected() - live state of the HDMI hot plug detect line
  * @bridge: the IT66121 bridge
  *
- * Return: true if an HDMI monitor is connected, false if not or if it cannot be read
+ * Return: 1 if an HDMI monitor is connected, 0 if not, a negative error code if the line cannot
+ * be read
  */
-bool it66121_hpd_connected(struct drm_bridge *bridge)
+int it66121_hpd_connected(struct drm_bridge *bridge)
 {
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 	unsigned int val;
+	int ret;
 
-	return !regmap_field_read(priv->hpd, &val) && val;
+	ret = regmap_field_read(priv->hpd, &val);
+	if (ret)
+		return ret;
+
+	return !!val;
 }
 
 /*
