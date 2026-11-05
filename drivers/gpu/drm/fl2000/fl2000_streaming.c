@@ -695,6 +695,12 @@ static void fl2000_xrgb2101010_to_xrgb8888_line(u32 *buf, u32 x_start, u32 x_end
  * is a partial cache-line transaction over PCIe. drm_memcpy_from_wc() uses
  * streaming loads to fetch whole lines, about ten times faster. On cached RAM
  * a non-temporal load is slower than a plain memcpy, so choose per source.
+ *
+ * Streaming loads move whole 16 bytes and fall back to the slow plain read for
+ * any other length, and a line of 1366 pixels is 5464 bytes (78 ms instead of
+ * 8 ms per frame). From a 16-byte aligned address the length can be rounded
+ * up without leaving the buffer, whose size is whole pages; the pixels past
+ * the span land in the line buffer but are not converted.
  */
 static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_map *src_map,
 			     size_t offset, size_t len)
@@ -708,6 +714,8 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
 	}
 
 	iosys_map_incr(&src, offset);
+	if (IS_ALIGNED((uintptr_t)src.vaddr_iomem, 16))
+		len = ALIGN(len, 16);
 	drm_memcpy_from_wc(&dst, &src, len);
 }
 
