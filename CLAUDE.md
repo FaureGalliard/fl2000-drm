@@ -178,6 +178,13 @@ that). Leave the dongle unplugged ~10 s first and verify with
   Converters and the cursor blend take the frame base plus the line offset, and
   `fl2000_copy_rect()` copies whole words. `scripts/test-frame-layout.py` checks
   the real functions; run it after touching `fl2000_streaming.c`.
+- **Every frame ends with a zero-length URB of its own.** The device takes a
+  zero-length packet as the end of a frame (ACLK bit 28). `URB_ZERO_PACKET`
+  only sends one when the frame is a whole number of 1024-byte packets, so
+  1366x768 (3073.5 packets) ended in a short packet, had no end, and stayed
+  black. The vendor driver sends the separate URB too. Symptom to recognise:
+  `Stream:` reports `sent/s` well above the refresh rate (the device drains 3
+  bytes per pixel clock); a working mode shows exactly one frame per refresh.
 - **Reading status register 0x8000 clears its event bits**, so every read goes
   through `fl2000_intr_read_status()`, which latches them until the interrupt
   work reports them. Do not read the register anywhere else, and note that
@@ -201,14 +208,14 @@ that). Leave the dongle unplugged ~10 s first and verify with
 
 ## Open issues
 
-0. **VGA output** (new, 5 Nov 2026, not yet tested with the driver on hardware):
-   the code is in `fl2000_vga.c`, see `docs/DEVELOPMENT.md`, "VGA output". To
-   check: the connector appears and is `connected` by itself with the VGA monitor
-   on and nothing on HDMI; `scripts/fl2000-field-test.sh` shows colour bars at
-   1024x768 and with `FL2000_TEST_MODE=1366x768`; unplugging the VGA cable makes
-   it `disconnected` (and the HDMI connector keeps working when the adapter is
-   used with an HDMI monitor, which has to be re-checked after this change).
-   VGA-only adapters without an IT66121 are not supported.
+0. **VGA output** (5 Nov 2026): the code is in `fl2000_vga.c`, see
+   `docs/DEVELOPMENT.md`, "VGA output". Tested with the LG 19EN43: the
+   connector is `connected` by itself with nothing on HDMI, and GNOME works at
+   1024x768, 1280x720, 1280x768 and 1280x800. Still to check: 1366x768 after
+   the frame-end fix (issue 7); unplugging the VGA cable makes it
+   `disconnected`; the HDMI connector keeps working with an HDMI monitor
+   (59.94 Hz 1080p, VGA disconnected). VGA-only adapters without an IT66121
+   are not supported.
 1. **Hot replug.** Unplug and replug are clean in the kernel, the colour-bar
    test works afterwards (`docs/field-test-15_04.log`). Under GNOME the result
    depends on the DRM node number: with Mutter 51.1 a replug that gets a new
@@ -224,8 +231,10 @@ that). Leave the dongle unplugged ~10 s first and verify with
    root-free check after a test boot: `scripts/post-boot-check.sh`.
 2. **Frame pacing.** Vblank now comes from the DRM vblank timer at the mode's
    refresh rate (it used to follow every URB completion). The stream itself
-   still free-runs, resending the last frame at maximum USB rate; pacing it to
-   the refresh rate would save USB bandwidth and CPU. Measure first.
+   resends the last frame as soon as a buffer completes, but measured on 5 Nov
+   the device already paces it by USB flow control: `sent/s` equals the
+   refresh rate at every mode it displays, and an unchanged frame is resent
+   without any copy. Little seems left to gain; re-measure before working on it.
 3. The IT66121 EDID FIFO path never succeeds on this hardware (harmless: it
    costs ~500 ms of timeouts before the direct path runs, and it is kept because
    other board wirings may need it).
@@ -241,11 +250,18 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **1366x768 and 1360x768 do not work on VGA** with the LG 19EN43 (1366x768
-   panel): black screen and a mostly garbled/black picture, while 1024x768,
-   1280x720, 1280x800 and 1280x768 are fine. The per-line word swap was fixed
-   (`scripts/test-frame-layout.py`) but that was not the cause; the rejected
-   theories and what is left to try are in `docs/DEVELOPMENT.md`, "VGA output".
+7. **1366x768 black on VGA: cause found, fix not yet verified on hardware.**
+   The frames had no end (see the zero-length URB invariant; commit 627c569),
+   and the conversion at that width fell off the streaming-load path (78 ms
+   per frame; commit b22b48e). To verify, from a real TTY:
+   `sudo FL2000_TEST_MODE='1366x768 #14 1360x768 848x480 800x600 1024x768' bash scripts/fl2000-field-test.sh`
+   (the `setting mode` line shows which mode each `#N` picked; `sent/s` must
+   equal each mode's refresh rate), then GNOME at 1366x768 (`conv` ~8 ms per
+   full frame). **1360x768 (mostly garbled) is a separate problem**: its frame
+   is a whole number of packets and the device ran at one frame per refresh.
+   Suspect the monitor's mode detection first; 848x480 tells a chip limit from
+   the monitor. Details and rejected theories: `docs/DEVELOPMENT.md`, "VGA
+   output".
 8. **Upstream review items still open** (done: simple pipe removed, shadow
    plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable):
    - `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`. Blocked for

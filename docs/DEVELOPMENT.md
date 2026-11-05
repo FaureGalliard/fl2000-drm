@@ -87,25 +87,57 @@ encoders being clones of each other. Measured on the real adapter with
   - "Out of range" on the monitor: 1440x900, 1280x1024, 1600x900. Expected: they
     exceed the panel.
   - **1366x768: plain black screen, no OSD message. 1360x768: most of the screen
-    garbled or black.** The chip is fine: `fl2000-reg.py diag` counts 59.5 Hz
-    against 59.76 programmed, PLL and timings as computed, and the timings equal
-    the vendor's table entry (htotal 1792x798, hsync 143, hstart 357, vstart 28);
-    only the vendor's pixel clock differs (85.83 MHz, 60.02 Hz).
+    garbled or black.** The chip's timing side is fine: `fl2000-reg.py diag`
+    counts 59.5 Hz against 59.76 programmed, PLL and timings as computed, and the
+    timings equal the vendor's table entry (htotal 1792x798, hsync 143, hstart
+    357, vstart 28); only the vendor's pixel clock differs (85.83 MHz, 60.02 Hz).
   - **Rejected by `fl2000-reg.py sweep` on the running 1366x768 mode** (all six
     variants stayed black): the four combinations of the sync polarity bits
     (0x8004 bits 2/3) and the vendor's pixel clock with two polarities. An exact
     htotal does not help either (the previous module changed it, this one does
     not). The monitor was also reported to need CRU on Windows.
-  - Untested ideas: the widths that work are multiples of 64 pixels (1024, 1280)
-    and the failing ones are not (1360 = 42.5 x 32, 1366 not even a multiple of 8),
-    so the chip or the stream may need line or frame padding for such widths
-    (the frame of 1366x768 is not a multiple of 1024 bytes either); the
-    colour-bar test from a TTY (`FL2000_TEST_MODE='#13'`, `'#14'`, `'#15'`)
-    separates GNOME's framebuffer path from the driver and the monitor; CVT or
-    reduced-blanking timings (`video=VGA-1:1366x768MR@60e`).
-  - At 1366 pixels one full-frame conversion takes ~78 ms instead of ~5 ms: the
-    line of 5464 bytes is not a multiple of 16, so `drm_memcpy_from_wc()` falls
-    back to `memcpy_fromio()`. Not the cause of the black screen; still to fix.
+  - **Cause of the black 1366x768: the frames had no end.** The device takes a
+    zero-length packet as the end of a frame (ACLK 0x803C bits 27-29 select the
+    end-of-frame type; bit 28, `USE_ZERO_PKT_LEN`, is the vendor's
+    `EOF_ZERO_LENGTH`). The driver relied on `URB_ZERO_PACKET`, which only sends
+    that packet when the transfer is a whole number of packets. A 1366x768 frame
+    is 3147264 bytes, 3073.5 packets of 1024: it ended in a short packet and
+    nothing followed. The vendor driver sends a separate zero-length URB after
+    every frame and no `URB_ZERO_PACKET` (`fl2000_bulk.c`, `fl2000_render.c` in
+    github.com/FrescoLogic/FL2000); the driver now does the same (commit
+    627c569). **Not yet verified on hardware.** Every mode whose frame is not a
+    multiple of 1024 bytes was affected at 24 bpp, including 800x600, 848x480,
+    1400x1050, 1440x900, 1600x900 and 1680x1050; 1024x768, 1280x720/768/800,
+    1360x768 and 1920x1080 are multiples and were not. The line-padding idea
+    (widths that are multiples of 64 pixels) is not needed for this.
+  - **How it showed: the `Stream:` line.** When the device takes our frames it
+    accepts exactly one per refresh (USB flow control paces the bulk endpoint),
+    so `sent/s` equals the refresh rate: 60 at 1024x768, 1280x720 and 1360x768,
+    59 at 1920x1080@59.94. With the frame end missing it took data at exactly 3
+    bytes per pixel clock, blanking included: 81 sent/s and 244 MB/s (MiB) at
+    1366x768@59.79 (85.454 MHz), 68 sent/s and 206 MB/s at 1366x768@60 (72 MHz),
+    68 sent/s and 253 MB/s at 1440x900 (88.75 MHz), all within 0.5 % of 3 x
+    pixel clock. `sent/s` well above the refresh rate therefore means the device
+    is not seeing frame ends, whatever the monitor shows; the field test prints
+    the last `Stream:` line after each test mode for this reason.
+  - **1360x768 is a different problem.** Its frame is a whole number of packets
+    (3060 x 1024), the device ran at one frame per refresh, and the picture was
+    still mostly garbled, so the ZLP fix does not change it on the wire. Suspect
+    the monitor first: 1360x768 and 1366x768 share htotal 1792, the pixel clock
+    and the sync frequencies, so it may sample one as the other (try its AUTO
+    button). 848x480 (53 x 16 pixels, not a multiple of 32 like 1360) separates a
+    chip limit from the monitor once the ZLP fix is in.
+  - At 1366 pixels one full-frame conversion took ~78 ms instead of ~8 ms: the
+    line of 5464 bytes is not a multiple of 16, so `drm_memcpy_from_wc()` fell
+    back to a plain memcpy from write-combined memory. `fl2000_read_span()` now
+    rounds the length up to 16 bytes when the source is aligned (commit
+    b22b48e); expect `conv` ~8 ms per full frame at 1366x768.
+  - The colour-bar test from a TTY separates GNOME's framebuffer path from the
+    driver and the monitor. It must run on a real VT (Ctrl+Alt+F3): from a
+    terminal inside GNOME the mode set fails with `Permission denied` because
+    Mutter is the DRM master. The three logs `field-test-18_2[789].log` of 5 Nov
+    were taken that way (`TTY=pts/1` in the journal's sudo lines) and show no
+    picture; their `Stream:` lines are what exposed the missing frame end.
   - The EDID at 0x50 returns I2C status 15 (NAK) at offset 0 (once at offset 4);
     `edid-quiet`, `edid-wait` and a replug of the USB did not change it.
 - **Odd line widths were scrambled** at the native 1366x768 of that monitor: the

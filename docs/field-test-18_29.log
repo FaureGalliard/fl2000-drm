@@ -1,0 +1,214 @@
+fl2000 field test - Thu Nov  5 06:29:31 PM -05 2026
+kernel: 7.2.11-arch1-1
+
+=== quirk usb-storage (debe contener 1d5c:2000:i) ===
+1d5c:2000:i
+
+
+=== modulo fl2000 ===
+fl2000                 81920  11
+
+=== adaptador USB ===
+Bus 002 Device 003: ID 1d5c:2000 Fresco Logic FL2000/FL2000DX VGA/DVI/HDMI Adapter
+
+=== esperando tarjeta DRM del fl2000 (max 90s) ===
+tarjeta DRM presente (tras 2s)
+
+=== estado /sys/class/drm ===
+card1
+card1-eDP-1
+card1-HDMI-A-1
+card2
+card2-HDMI-A-3
+card2-VGA-2
+renderD128
+version
+/sys/class/drm/card1-eDP-1/status: connected
+/sys/class/drm/card1-HDMI-A-1/status: disconnected
+/sys/class/drm/card2-HDMI-A-3/status: disconnected
+/sys/class/drm/card2-VGA-2/status: connected
+
+=== conectores y modos (modetest -c) ===
+opened device `Fresco Logic FL2000 USB display` on driver `fl2000` (version 0.0.1 at 0)
+Connectors:
+id	encoder	status		name		size (mm)	modes	encoders
+41	0	disconnected	HDMI-A-3       	0x0		0	40
+  props:
+	1 EDID:
+		flags: immutable blob
+		blobs:
+
+		value:
+	2 DPMS:
+		flags: enum
+		enums: On=0 Standby=1 Suspend=2 Off=3
+		value: 0
+	5 link-status:
+		flags: enum
+		enums: Good=0 Bad=1
+		value: 0
+	7 non-desktop:
+		flags: immutable range
+		values: 0 1
+		value: 0
+	4 TILE:
+		flags: immutable blob
+		blobs:
+
+		value:
+43	42	connected	VGA-2          	0x0		25	42
+  modes:
+	index name refresh (Hz) hdisp hss hse htot vdisp vss vse vtot
+  #0 1024x768 60.00 1024 1048 1184 1344 768 771 777 806 65000 flags: nhsync, nvsync; type: preferred, driver
+  #1 1920x1200 59.95 1920 1968 2000 2080 1200 1203 1209 1235 154000 flags: phsync, nvsync; type: driver
+  #2 1920x1080 60.00 1920 2008 2052 2200 1080 1084 1089 1125 148500 flags: nhsync, nvsync; type: driver
+  #3 1600x1200 60.00 1600 1664 1856 2160 1200 1201 1204 1250 162000 flags: phsync, pvsync; type: driver
+  #4 1680x1050 59.95 1680 1784 1960 2240 1050 1053 1059 1089 146250 flags: nhsync, pvsync; type: driver
+  #5 1680x1050 59.88 1680 1728 1760 1840 1050 1053 1059 1080 119000 flags: phsync, nvsync; type: driver
+  #6 1400x1050 59.98 1400 1488 1632 1864 1050 1053 1057 1089 121750 flags: nhsync, pvsync; type: driver
+  #7 1400x1050 59.95 1400 1448 1480 1560 1050 1053 1057 1080 101000 flags: phsync, nvsync; type: driver
+  #8 1600x900 60.00 1600 1624 1704 1800 900 901 904 1000 108000 flags: phsync, pvsync; type: driver
+  #9 1280x1024 60.02 1280 1328 1440 1688 1024 1025 1028 1066 108000 flags: phsync, pvsync; type: driver
+
+=== EDID decodificado (si hay edid-decode) ===
+/sys/class/drm/card2-HDMI-A-3/edid vacio o inexistente (un monitor sin EDID es normal en VGA)
+/sys/class/drm/card2-VGA-2/edid vacio o inexistente (un monitor sin EDID es normal en VGA)
+
+=== registros del chip (estado, deteccion de monitor, PLL) ===
+STATUS  0x8000 = 0x29fbf6c1  VGA_STATUS PLL_STATUS DAC_STATUS LBUF_UNDERFLOW FRAME_CNT=32509 HDMI_STATUS MONITOR_STATUS
+PXCLK   0x8004 = 0x0010039c  HSYNC_POLARITY VSYNC_POLARITY DE_POLARITY DAC_OUTPUT_EN VGA_TIMING_EN USE_NEW_PKT_RETRY
+I2C_SC  0x8020 = 0xc0000ccc  ADDR=76 CMD OFFSET=12 VGA_STATUS=0 STATUS=0 EDID_DETECT DONE
+PLL     0x802c = 0x005e610b  DIVISOR=11 PRESCALER=1 FUNCTION=3 MULTIPLIER=94
+ACLK    0x803c = 0xd521084d  CFG_TIMING_RESET_N EDID_MON_INT_EN EXT_MON_INT_EN PLL_LOCK_TIME=2 PPE_BLOCK_EM STANDBY_EN LBUF_ERR_INT_EN VGA_ERR_INT_EN FORCE_PLL_UP USE_ZERO_PKT_LEN PLL_DAC_PD_USBP3_EN PLL_DAC_PD_NOVGA_EN
+CTRL2   0x8064 = 0x311c0118  MSTOR_BLKSIZE_PTR_WIDTH=4 MSTOR_BLK_COUNT=17 HDMI_INT_EN HDMI_INT_ACTIVE_HIGH SPI_EN SW_PROD_REV=98
+
+=== PRUEBA DE MODESET: patron de colores 15s en conector 43 modo #15 ===
+>>> MIRA EL MONITOR AHORA - deberian verse barras de colores <<<
+failed to set mode: Permission denied
+opened device `Fresco Logic FL2000 USB display` on driver `fl2000` (version 0.0.1 at 0)
+setting mode 1360x768-60.02Hz on connectors 43, crtc 39
+(anota si se vio el patron y compartelo junto con este log)
+
+=== dmesg (ultimas 120 lineas) ===
+[  712.320135] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  717.335117] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  722.350101] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  727.364996] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  732.379868] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  737.394726] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  742.410030] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  747.424331] usb 2-2: Stream: 60 sent/s, 2 rendered/s, 158 MB/s, 1 stalled, conv 7960 us (max 9989) over 921600 px
+[  752.439121] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 1 stalled, conv 4777 us (max 7851) over 618276 px
+[  757.453834] usb 2-2: Stream: 60 sent/s, 0 rendered/s, 158 MB/s, 1 stalled, conv 8590 us (max 9498) over 921600 px
+[  763.911086] usb 2-2: Stream: 81 sent/s, 1 rendered/s, 244 MB/s, 56 stalled, conv 77574 us (max 85865) over 1049088 px
+[  768.920409] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  773.929701] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  778.939411] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  783.948582] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  788.957343] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  793.966491] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  798.975752] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  803.984930] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  808.994095] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  814.003700] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  819.012410] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  824.021950] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  829.030647] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  834.040235] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  839.049314] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  844.058011] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  849.067144] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  854.076676] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  859.085279] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  864.094395] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  869.103903] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  874.112993] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 245 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  879.124331] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 245 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  884.136306] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 245 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  889.147173] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 245 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  894.159075] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 245 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  899.168161] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  904.177224] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  909.186075] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  914.190256] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  919.195292] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  924.200040] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  929.204646] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  934.209996] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  939.215604] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  944.221368] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  949.227404] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  954.234070] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  959.240011] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  964.246498] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  969.253628] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  974.259924] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  979.266875] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  984.273964] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  989.281081] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  994.288450] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[  999.295714] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1004.303146] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1009.310687] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1014.318242] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1019.325902] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 6 stalled, conv 71508 us (max 71508) over 1049088 px
+[ 1024.333620] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1029.341693] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1034.349278] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1039.357146] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1044.365068] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1049.372997] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1054.381060] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1059.389058] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1064.397126] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1069.405242] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1074.413408] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1079.421629] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1084.429742] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1089.438009] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1094.446227] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1099.455089] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1104.462730] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1109.470941] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1114.479775] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1119.487642] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1124.496000] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1129.504751] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1134.513177] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1139.521006] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1144.529310] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1149.537735] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1154.546081] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1159.554487] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1164.562909] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1169.574996] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1174.587696] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1179.599678] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1184.600013] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1189.611438] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1194.623113] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1199.634541] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1204.645837] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1209.656974] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1214.667947] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1219.679212] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1224.689454] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1229.700132] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1234.710430] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1239.720684] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1244.730915] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1249.741524] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1254.751071] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1259.761050] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1264.771327] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1269.781207] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1274.790895] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1279.800777] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1284.810222] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1289.819813] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1294.829412] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1299.839215] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1304.847865] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+[ 1309.857323] usb 2-2: Stream: 81 sent/s, 0 rendered/s, 244 MB/s, 0 stalled, conv 0 us (max 0) over 0 px
+
+Listo. Log guardado en docs/field-test-18_29.log - haz commit y push para compartirlo.
