@@ -8,6 +8,9 @@
 # sesion grafica (la prueba de modeset puede fallar con Permission denied,
 # el resto de la evidencia se captura igual).
 #
+# Con un monitor VGA: dejarlo conectado y encendido. Para probar otro modo que
+# el preferido: sudo FL2000_TEST_MODE=1366x768 ./scripts/fl2000-field-test.sh
+#
 # El resultado queda en docs/field-test-HH_MM.log — hacer commit y push.
 
 set -u
@@ -88,7 +91,9 @@ step "conectores y modos (modetest -c)"
 modetest -M fl2000 -c 2>&1 | head -40
 
 step "EDID decodificado (si hay edid-decode)"
-for e in /sys/class/drm/card*-HDMI-A-2/edid; do
+for e in /sys/class/drm/card*-*/edid; do
+	# Solo los conectores del adaptador USB, no los de la tarjeta grafica
+	readlink -f "$e" | grep -q '/usb[0-9]' || continue
 	if [ -s "$e" ]; then
 		if command -v edid-decode >/dev/null; then
 			edid-decode <"$e" | head -30
@@ -96,18 +101,21 @@ for e in /sys/class/drm/card*-HDMI-A-2/edid; do
 			echo "$e tiene $(stat -c%s "$e") bytes (instala edid-decode para ver detalle)"
 		fi
 	else
-		echo "$e vacio o inexistente"
+		echo "$e vacio o inexistente (un monitor sin EDID es normal en VGA)"
 	fi
 done
+
+step "registros del chip (estado, deteccion de monitor, PLL)"
+python3 scripts/fl2000-reg.py status 2>&1 || echo "(no se pudieron leer los registros)"
 
 if [ "$FOUND" = 1 ]; then
 	CONN=$(modetest -M fl2000 -c 2>/dev/null | awk '/\<connected\>/{print $1; exit}')
 	# Primer modo de la lista (el preferido del monitor), sin fijar refresh:
 	# p.ej. el LG lista 1920x1080@59.94 y "1920x1080-60" no haria match
-	MODE=$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')
+	MODE=${FL2000_TEST_MODE:-$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')}
 	if [ -n "${CONN:-}" ] && [ -n "${MODE:-}" ]; then
 		step "PRUEBA DE MODESET: patron de colores 15s en conector $CONN modo $MODE"
-		echo ">>> MIRA EL MONITOR LG AHORA - deberian verse barras de colores <<<"
+		echo ">>> MIRA EL MONITOR AHORA - deberian verse barras de colores <<<"
 		sleep 12 | modetest -M fl2000 -s "$CONN:$MODE" 2>&1
 		echo "(anota si se vio el patron y compartelo junto con este log)"
 	else
