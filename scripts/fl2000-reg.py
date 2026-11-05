@@ -12,6 +12,7 @@
 #   sudo python3 scripts/fl2000-reg.py edid [file]     read the monitor EDID at 0x50
 #   sudo python3 scripts/fl2000-reg.py edid-wait [file]  retry for 60 s while you replug the cable
 #   sudo python3 scripts/fl2000-reg.py edid-quiet [file] edid with the chip's own EDID/monitor detection off
+#   sudo python3 scripts/fl2000-reg.py diag            programmed timings and PLL, and the frame rate the chip really runs at
 #   sudo python3 scripts/fl2000-reg.py read 0x803c
 #   sudo python3 scripts/fl2000-reg.py write 0x803c 0x0
 #   sudo python3 scripts/fl2000-reg.py set 0x802c 26   set bit 26
@@ -204,6 +205,33 @@ def main():
     if cmd == "status":
         for name in ("STATUS", "PXCLK", "I2C_SC", "PLL", "ACLK", "CTRL2"):
             show(dev, name)
+    elif cmd == "diag":
+        # The frame counter (status bits 25:10) counts the frames the chip puts out
+        s1 = dev.read(REGS["STATUS"][0])
+        t1 = time.time()
+        time.sleep(2.0)
+        s2 = dev.read(REGS["STATUS"][0])
+        t2 = time.time()
+        frames = (((s2 >> 10) & 0xFFFF) - ((s1 >> 10) & 0xFFFF)) & 0xFFFF
+        h1, h2, v1, v2 = (dev.read(r) for r in (0x8008, 0x800C, 0x8010, 0x8014))
+        pll = dev.read(0x802C)
+        htot, hact = h1 & 0xFFF, (h1 >> 16) & 0xFFF
+        vtot, vact = v1 & 0xFFF, (v1 >> 16) & 0xFFF
+        div, pre, func, mult = pll & 0xFF, (pll >> 8) & 3, (pll >> 13) & 3, (pll >> 16) & 0xFF
+        vco = 10.0 / pre * mult if pre else 0.0
+        clk = vco / div if div else 0.0
+        print("timings   : %dx%d, total %dx%d, hstart %d, hsync %d, vstart %d, vsync %d, latency %d" %
+              (hact, vact, htot, vtot, h2 & 0xFFF, (h2 >> 16) & 0xFF, v2 & 0xFFF,
+               (v2 >> 16) & 7, (v2 >> 20) & 0x3FF))
+        print("PLL       : prescaler %d, multiplier %d, divisor %d, function %d -> VCO %.1f MHz, pixel clock %.3f MHz" %
+              (pre, mult, div, func, vco, clk))
+        if htot and vtot:
+            print("refresh programmed : %.2f Hz" % (clk * 1e6 / (htot * vtot)))
+        print("refresh counted    : %.2f Hz (%d frames in %.2f s)" % (frames / (t2 - t1), frames, t2 - t1))
+        for name in ("STATUS", "PXCLK", "ACLK"):
+            show(dev, name)
+        print("PXCLK_CNT 0x8040: 0x%08x, then 0x%08x" % (dev.read(0x8040), dev.read(0x8040)))
+        print("VCNT      0x8044: 0x%08x" % dev.read(0x8044))
     elif cmd in ("edid", "edid-wait", "edid-quiet"):
         deadline = time.time() + (60 if cmd == "edid-wait" else 0)
         if cmd == "edid-wait":
@@ -257,4 +285,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except OSError as e:
+        if e.errno == 19:
+            sys.exit("the FL2000 went away (unplugged or re-enumerated)")
+        raise
