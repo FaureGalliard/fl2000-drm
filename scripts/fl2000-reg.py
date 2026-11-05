@@ -13,6 +13,7 @@
 #   sudo python3 scripts/fl2000-reg.py edid-wait [file]  retry for 60 s while you replug the cable
 #   sudo python3 scripts/fl2000-reg.py edid-quiet [file] edid with the chip's own EDID/monitor detection off
 #   sudo python3 scripts/fl2000-reg.py diag            programmed timings and PLL, and the frame rate the chip really runs at
+#   sudo python3 scripts/fl2000-reg.py sweep           with a mode that shows nothing active: try other pixel clocks and sync polarities
 #   sudo python3 scripts/fl2000-reg.py read 0x803c
 #   sudo python3 scripts/fl2000-reg.py write 0x803c 0x0
 #   sudo python3 scripts/fl2000-reg.py set 0x802c 26   set bit 26
@@ -205,6 +206,39 @@ def main():
     if cmd == "status":
         for name in ("STATUS", "PXCLK", "I2C_SC", "PLL", "ACLK", "CTRL2"):
             show(dev, name)
+    elif cmd == "sweep":
+        # One change at a time on the running mode, to find what a picky monitor does not like.
+        # Everything is restored at the end; changing the mode from the desktop also restores it.
+        PLL, PXCLK = 0x802C, 0x8004
+        base_pll, base_px = dev.read(PLL), dev.read(PXCLK)
+        vendor_pll = 0x00676206  # the vendor's table entry for 1366x768: 85.83 MHz, 60.02 Hz
+
+        def sync(h, v):
+            return (base_px & ~0xC) | (h << 2) | (v << 3)
+
+        variants = [("as programmed (sync polarity bits H=1 V=1)", base_pll, sync(1, 1)),
+                    ("polarity bits H=0 V=0", base_pll, sync(0, 0)),
+                    ("polarity bits H=0 V=1", base_pll, sync(0, 1)),
+                    ("polarity bits H=1 V=0", base_pll, sync(1, 0)),
+                    ("vendor pixel clock 85.83 MHz, polarity 1/1", vendor_pll, sync(1, 1)),
+                    ("vendor pixel clock 85.83 MHz, polarity 0/0", vendor_pll, sync(0, 0))]
+        results = []
+        try:
+            for i, (name, pll, px) in enumerate(variants, 1):
+                dev.write(PLL, pll)
+                dev.write(PXCLK, px)
+                time.sleep(4)
+                print("\n[%d/%d] %s" % (i, len(variants), name))
+                ans = input("    what does the monitor show? (e.g. picture / black / out of range; q = stop): ")
+                if ans.strip().lower() == "q":
+                    break
+                results.append((name, ans.strip() or "-"))
+        finally:
+            dev.write(PLL, base_pll)
+            dev.write(PXCLK, base_px)
+        print("\nrestored; summary:")
+        for name, ans in results:
+            print("  %-48s %s" % (name, ans))
     elif cmd == "diag":
         # The frame counter (status bits 25:10) counts the frames the chip puts out
         s1 = dev.read(REGS["STATUS"][0])
