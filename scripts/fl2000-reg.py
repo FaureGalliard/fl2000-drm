@@ -10,6 +10,7 @@
 #   sudo python3 scripts/fl2000-reg.py status          decoded key registers
 #   sudo python3 scripts/fl2000-reg.py watch           print status changes
 #   sudo python3 scripts/fl2000-reg.py edid [file]     read the monitor EDID at 0x50
+#   sudo python3 scripts/fl2000-reg.py edid-wait [file]  retry for 60 s while you replug the cable
 #   sudo python3 scripts/fl2000-reg.py read 0x803c
 #   sudo python3 scripts/fl2000-reg.py write 0x803c 0x0
 #   sudo python3 scripts/fl2000-reg.py set 0x802c 26   set bit 26
@@ -154,6 +155,13 @@ def i2c_read_dword(dev, addr, offset):
     return dev.read(I2C_RD)
 
 
+def read_edid(dev):
+    data = bytearray()
+    for off in range(0, 128, 4):
+        data += struct.pack("<I", i2c_read_dword(dev, 0x50, off))
+    return bytes(data)
+
+
 def parse_edid(b):
     print("EDID checksum:", "ok" if sum(b[:128]) & 0xFF == 0 else "WRONG (%d)" % (sum(b[:128]) & 0xFF))
     print("header:", "ok" if b[:8] == bytes([0, 255, 255, 255, 255, 255, 255, 0]) else "INVALID")
@@ -192,14 +200,31 @@ def main():
     if cmd == "status":
         for name in ("STATUS", "PXCLK", "I2C_SC", "PLL", "ACLK", "CTRL2"):
             show(dev, name)
-    elif cmd == "edid":
-        data = bytearray()
-        for off in range(0, 128, 4):
-            data += struct.pack("<I", i2c_read_dword(dev, 0x50, off))
+    elif cmd in ("edid", "edid-wait"):
+        deadline = time.time() + (60 if cmd == "edid-wait" else 0)
+        if cmd == "edid-wait":
+            print("Waiting up to 60 s: unplug and replug the VGA cable now", flush=True)
+        last = None
+        while True:
+            st = dev.read(REGS["STATUS"][0])
+            try:
+                data = read_edid(dev)
+                break
+            except OSError as e:
+                if cmd == "edid" or time.time() > deadline:
+                    sys.exit("no EDID: %s (MONITOR_STATUS=%d EDID_STATUS=%d)" %
+                             (e, (st >> 29) & 1, (st >> 28) & 1))
+                msg = "no EDID: %s (MONITOR_STATUS=%d EDID_STATUS=%d)" % (
+                    e, (st >> 29) & 1, (st >> 28) & 1)
+                if msg != last:
+                    print(time.strftime("%H:%M:%S"), msg, flush=True)
+                    last = msg
+                time.sleep(0.2)
+        print(time.strftime("%H:%M:%S"), "EDID read")
         print(" ".join("%02x" % x for x in data[:16]), "...")
-        parse_edid(bytes(data))
+        parse_edid(data)
         if len(sys.argv) > 2:
-            open(sys.argv[2], "wb").write(bytes(data))
+            open(sys.argv[2], "wb").write(data)
             print("saved to", sys.argv[2])
     elif cmd == "watch":
         # The frame counter changes all the time while the chip outputs frames: ignore it
