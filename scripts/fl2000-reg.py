@@ -9,10 +9,15 @@
 #
 #   sudo python3 scripts/fl2000-reg.py status          decoded key registers
 #   sudo python3 scripts/fl2000-reg.py watch           print status changes
+#   sudo python3 scripts/fl2000-reg.py edid [file]     read the monitor EDID at 0x50
 #   sudo python3 scripts/fl2000-reg.py read 0x803c
 #   sudo python3 scripts/fl2000-reg.py write 0x803c 0x0
 #   sudo python3 scripts/fl2000-reg.py set 0x802c 26   set bit 26
 #   sudo python3 scripts/fl2000-reg.py clear 0x802c 26
+#
+# The 'edid' command drives the chip's I2C engine exactly like the kernel driver
+# does, so it can collide with the driver's own use of it (the IT66121 polling at
+# 0x4c): if the checksum is wrong, run it again.
 #
 # Caveats: reading 0x8000 clears its 'read self clear' bits, so the driver can
 # miss an event while this runs; the driver caches non-volatile registers, so it
@@ -128,6 +133,49 @@ def decode(val, fields):
     return " ".join(out)
 
 
+I2C_SC, I2C_RD = 0x8020, 0x8024
+
+
+def i2c_read_dword(dev, addr, offset):
+    # Same sequence as fl2000_i2c_dword() in the driver (read case)
+    mask = (1 << 28) | (1 << 30) | (0xF << 24) | 0x7F | (1 << 7) | (0xFF << 8) | (1 << 31)
+    val = (1 << 28) | (1 << 30) | (addr & 0x7F) | (1 << 7) | ((offset & 0xFF) << 8)
+    dev.write(I2C_SC, (dev.read(I2C_SC) & ~mask) | val)
+    deadline = time.time() + 1.0
+    while True:
+        v = dev.read(I2C_SC)
+        if v & (1 << 31):
+            break
+        if time.time() > deadline:
+            raise OSError("I2C engine timeout")
+        time.sleep(0.002)
+    if (v >> 24) & 0xF:
+        raise OSError("I2C error status %d at offset 0x%02x" % ((v >> 24) & 0xF, offset))
+    return dev.read(I2C_RD)
+
+
+def parse_edid(b):
+    print("EDID checksum:", "ok" if sum(b[:128]) & 0xFF == 0 else "WRONG (%d)" % (sum(b[:128]) & 0xFF))
+    print("header:", "ok" if b[:8] == bytes([0, 255, 255, 255, 255, 255, 255, 0]) else "INVALID")
+    mid = (b[8] << 8) | b[9]
+    print("manufacturer %s, product 0x%04x, week %d year %d, EDID %d.%d, %s input, %d extension(s)" %
+          ("".join(chr(((mid >> sh) & 0x1F) + 64) for sh in (10, 5, 0)), b[10] | (b[11] << 8),
+           b[16], b[17] + 1990, b[18], b[19], "digital" if b[20] & 0x80 else "analog", b[126]))
+    for i in range(4):
+        d = b[54 + 18 * i:72 + 18 * i]
+        if d[0] | d[1]:
+            clk = (d[0] | (d[1] << 8)) * 10
+            ha, hb = d[2] | ((d[4] & 0xF0) << 4), d[3] | ((d[4] & 0x0F) << 8)
+            va, vb = d[5] | ((d[7] & 0xF0) << 4), d[6] | ((d[7] & 0x0F) << 8)
+            rate = clk * 1000.0 / ((ha + hb) * (va + vb)) if (ha + hb) * (va + vb) else 0
+            print("timing: %dx%d @ %.2f Hz, pixel clock %.2f MHz" % (ha, va, rate, clk / 1000.0))
+        elif d[3] == 0xFC:
+            print("name:", d[5:18].decode(errors="replace").split("\n")[0].strip())
+        elif d[3] == 0xFD:
+            print("range limits: V %d-%d Hz, H %d-%d kHz, max pixel clock %d MHz" %
+                  (d[5], d[6], d[7], d[8], d[9] * 10))
+
+
 def show(dev, name):
     off, fields = REGS[name]
     val = dev.read(off)
@@ -144,11 +192,22 @@ def main():
     if cmd == "status":
         for name in ("STATUS", "PXCLK", "I2C_SC", "PLL", "ACLK", "CTRL2"):
             show(dev, name)
+    elif cmd == "edid":
+        data = bytearray()
+        for off in range(0, 128, 4):
+            data += struct.pack("<I", i2c_read_dword(dev, 0x50, off))
+        print(" ".join("%02x" % x for x in data[:16]), "...")
+        parse_edid(bytes(data))
+        if len(sys.argv) > 2:
+            open(sys.argv[2], "wb").write(bytes(data))
+            print("saved to", sys.argv[2])
     elif cmd == "watch":
+        # The frame counter changes all the time while the chip outputs frames: ignore it
+        frame_cnt = ((1 << 16) - 1) << 10
         last = None
         while True:
             val = dev.read(REGS["STATUS"][0])
-            if val != last:
+            if last is None or (val ^ last) & ~frame_cnt:
                 print(time.strftime("%H:%M:%S"), "STATUS 0x%08x  %s" %
                       (val, decode(val, REGS["STATUS"][1])), flush=True)
                 last = val
