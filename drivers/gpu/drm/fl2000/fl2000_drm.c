@@ -60,11 +60,13 @@ static const u32 fl2000_cursor_formats[] = {
 #define FL2000_VCOCLOCK_MIN 62500000 /* 62.5 MHz */
 #define FL2000_VCOCLOCK_MAX 1000000000 /* 1 GHz */
 
-/* Maximum acceptable ppm error */
-#define FL2000_PPM_ERR_MAX 500
-
-/* How far htotal may be stretched or shrunk to land on a PLL setting, pixels */
-#define FL2000_MAX_H_ADJUST 10
+/*
+ * Maximum acceptable ppm error of the pixel clock. Digital sinks get the exact clock or nothing;
+ * an analog monitor locks to the line rate of whatever it is sent, so a clock off by half a
+ * percent goes unnoticed, while changing the length of a line (htotal) throws its sampling off.
+ */
+#define FL2000_PPM_ERR_MAX	500
+#define FL2000_PPM_ERR_MAX_VGA	5000
 
 /* Assume bulk transfers can use only 80% of USB bandwidth */
 #define FL2000_BULK_BW_PERCENT 80
@@ -244,52 +246,31 @@ static u64 fl2000_pll_calc(u64 clock_mil, struct fl2000_pll *pll, u32 *clock_cal
 }
 
 /*
- * Find the PLL setting for a mode. With a non-zero @max_h_adjustment the search may stretch or
- * shrink htotal, keeping the refresh rate, until the pixel clock lands on something the PLL can
- * make; zero accepts only the exact timings of the mode.
+ * Find the PLL setting for a mode, accepting a pixel clock off by up to @max_ppm parts per
+ * million. The timings of the mode are never touched, only the clock the PLL can make for it.
  */
 static int fl2000_mode_calc(const struct drm_display_mode *mode,
 			    struct drm_display_mode *adjusted_mode, struct fl2000_pll *pll,
-			    int max_h_adjustment)
+			    u64 max_ppm)
 {
-	u64 ppm_err;
 	u32 clock_calculated;
-	u64 clock_mil_adjusted;
-	const u64 clock_mil = (u64)mode->clock * 1000 * FL2000_PLL_PRECISION;
+	u64 ppm_err;
 
 	if (mode->clock * 1000 > FL2000_MAX_PIXCLOCK)
 		return -EINVAL;
 
-	/*
-	 * Try to match pixel clock slightly adjusting htotal value, sequence is:
-	 * 0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, ...
-	 * Here, 's' is used for sign, 'm' is used for modulo, and 'd' is the adjustment value.
-	 */
-	for (int m = 0, s = 1, d = 0; m <= max_h_adjustment * 2; m++, s = -s, d += m * s) {
-		/*
-		 * Maximum pixel clock 1GHz, or 10^9Hz. Multiply by 10^6 we get 10^15Hz. Assume
-		 * maximum htotal is 10000 pix (no way) we get 10^19 max value and using u64 which
-		 * is 1.8*10^19 no overflow can occur.
-		 */
-		clock_mil_adjusted = div_u64(clock_mil * (mode->htotal + d), mode->htotal);
+	/* To keep precision use clock multiplied by 10^6 */
+	ppm_err = fl2000_pll_calc((u64)mode->clock * 1000 * FL2000_PLL_PRECISION, pll,
+				  &clock_calculated);
+	if (ppm_err >= max_ppm)
+		return -EINVAL;
 
-		/* To keep precision use clock multiplied by 10^6 */
-		ppm_err = fl2000_pll_calc(clock_mil_adjusted, pll, &clock_calculated);
-
-		/* Stop searching as soon as the first valid option found */
-		if (ppm_err < FL2000_PPM_ERR_MAX) {
-			if (adjusted_mode) {
-				drm_mode_copy(adjusted_mode, mode);
-				adjusted_mode->htotal += d;
-				adjusted_mode->clock = clock_calculated / 1000;
-			}
-
-			return 0;
-		}
+	if (adjusted_mode) {
+		drm_mode_copy(adjusted_mode, mode);
+		adjusted_mode->clock = clock_calculated / 1000;
 	}
 
-	/* Cannot find a PLL configuration that satisfies the requirements */
-	return -EINVAL;
+	return 0;
 }
 
 static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
@@ -300,7 +281,7 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 	struct fl2000_pll pll;
 
 	/* Get PLL configuration and check if mode adjustments are needed */
-	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_MAX_H_ADJUST))
+	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_PPM_ERR_MAX_VGA))
 		return MODE_BAD;
 
 	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, adjusted_mode.clock) == 0)
@@ -468,7 +449,7 @@ static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_com
 
 	/* PLL configuration, with htotal and clock adjusted to what the PLL can produce */
 	ret = fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll,
-			       FL2000_MAX_H_ADJUST);
+			       FL2000_PPM_ERR_MAX_VGA);
 	if (ret)
 		return ret;
 
@@ -507,7 +488,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	 * Same computation as in atomic_check, which already validated the mode
 	 * and stored the adjusted htotal and clock in adjusted_mode.
 	 */
-	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_MAX_H_ADJUST)))
+	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX_VGA)))
 		return;
 	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode->clock);
 
@@ -596,16 +577,15 @@ static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 };
 
 /*
- * Digital sinks are only offered the modes the PLL hits with the standard htotal: a monitor expects
- * the exact timing of the mode it advertised. Analog monitors resynchronise to anything, so the
- * VGA output may go through the htotal adjustment of fl2000_mode_calc().
+ * Digital sinks are only offered the modes whose pixel clock the PLL hits closely: they expect the
+ * exact clock of the mode they advertised. The VGA output accepts a larger error.
  */
 static enum drm_mode_status fl2000_hdmi_encoder_mode_valid(struct drm_encoder *encoder,
 							   const struct drm_display_mode *mode)
 {
 	struct fl2000_pll pll;
 
-	return fl2000_mode_calc(mode, NULL, &pll, 0) ? MODE_NOCLOCK : MODE_OK;
+	return fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX) ? MODE_NOCLOCK : MODE_OK;
 }
 
 static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = {

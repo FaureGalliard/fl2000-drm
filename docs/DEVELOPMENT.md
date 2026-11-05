@@ -73,14 +73,19 @@ encoders being clones of each other. Measured on the real adapter with
   periodic detection colliding with the read (`fl2000-reg.py edid-quiet`), a
   monitor that only answers DDC for a short while after the cable is plugged
   (`edid-wait`), or DDC not wired in that cable.
-- **The htotal adjustment of the PLL search never ran** (the sign started at 0),
-  so modes such as 1366x768@60 (85.5 MHz), 1280x1024@60 and 1440x900@60 were
-  rejected. It is fixed, but only the VGA output may use it: digital sinks are
-  offered only the modes the PLL hits with the standard timings
-  (`fl2000_hdmi_encoder_mode_valid()`), which for 1500 of 1500 random modes is
-  identical to the old behaviour. With it on HDMI the 1080p60 mode (148.5 MHz)
-  would become valid and be programmed with htotal 2198 instead of 2200, which
-  needs an HDMI monitor to check; see `docs/pending/htotal-hdmi.md`.
+- **The pixel clock of VGA modes must be close, and htotal must stay exact.**
+  The PLL search had a loop meant to stretch htotal by a few pixels until the
+  clock landed on a PLL setting, which never ran (the sign started at 0). A first
+  fix enabled it for VGA, and the test monitor then showed nothing at 1366x768
+  and half a picture at 1360x768 (both programmed with htotal 1791 instead of
+  1792), while 1024x768, with the exact htotal, worked: an analog monitor derives
+  its sampling clock from the line length it expects. The loop is gone. Without
+  touching htotal the PLL makes 85.454 MHz for the 85.5 MHz modes (531 ppm, 59.76
+  Hz instead of 59.79 Hz), so the clock error accepted on VGA is 5000 ppm
+  (`FL2000_PPM_ERR_MAX_VGA`), as Samuv5's driver does, and digital sinks keep the
+  500 ppm they always had (`fl2000_hdmi_encoder_mode_valid()`); for 1200 of 1200
+  random modes the HDMI result is identical to the old code. 1280x1024@60,
+  1440x900@60 and 1366x768@60 become available on VGA.
 - **Odd line widths were scrambled** at the native 1366x768 of that monitor: the
   converters swapped the 32-bit halves of the 64-bit words from the start of
   each *line*, which is only right when a line is a multiple of 8 bytes (4098

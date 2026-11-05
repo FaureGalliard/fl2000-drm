@@ -185,9 +185,12 @@ that). Leave the dongle unplugged ~10 s first and verify with
 - **`FORCE_VGA_CONNECT` (ACLK bit 25) is only set while the HDMI encoder is
   active** and is cleared when the CRTC is disabled: set while driving VGA it
   hides the cable being unplugged and VGA detection would never see it go.
-- **The htotal adjustment is for VGA only.** HDMI keeps the exact timings
-  (`fl2000_hdmi_encoder_mode_valid()`); `docs/pending/htotal-hdmi.md` says what
-  lifting that would change and how.
+- **Never change the timings of a mode to fit the PLL, least of all htotal.**
+  An analog monitor derives its sampling clock from the line length: with
+  htotal 1791 instead of 1792 the LG 19EN43 showed nothing (1366x768) or half a
+  picture (1360x768). Only the pixel clock may be off, by up to
+  `FL2000_PPM_ERR_MAX_VGA` on VGA; HDMI keeps 500 ppm
+  (`fl2000_hdmi_encoder_mode_valid()`), see `docs/pending/htotal-hdmi.md`.
 - **No hotplug uevent before `drm_dev_register()`**: the core dereferences the
   minor's device, which does not exist yet (`registered` flag in
   `fl2000_drm.c`). The VGA encoder is created after `component_bind_all()`
@@ -228,12 +231,11 @@ that). Leave the dongle unplugged ~10 s first and verify with
    other board wirings may need it).
 4. `sysfs` `edid` file has read empty while the connector property blob was
    populated. Unexplained, cosmetic so far.
-5. **htotal adjustment on HDMI.** The search never adjusted anything (`s = 0`
-   in the `fl2000_mode_calc()` loop); fixed, and used by the VGA output only.
-   HDMI still offers just the modes the PLL hits exactly, which is why
-   1920x1080@60.00 is unavailable and 59.94 Hz is used. Allowing it on HDMI
-   changes the mode the monitor gets (htotal 2198): see
-   `docs/pending/htotal-hdmi.md` and test it with an HDMI monitor at hand.
+5. **1920x1080@60.00 on HDMI.** HDMI only offers modes whose pixel clock the
+   PLL hits within 500 ppm, which is why 59.94 Hz is used. Accepting 1122 ppm
+   would program the very same registers as the verified mode (148.333 MHz) and
+   make the 60.00 Hz mode valid: see `docs/pending/htotal-hdmi.md`, to try with
+   an HDMI monitor at hand.
 6. **USB bandwidth check is a no-op**: `fl2000_get_bytes_pix()` gets the
    pixel clock in kHz but treats it as Hz (and the 80 % margin is inverted),
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for

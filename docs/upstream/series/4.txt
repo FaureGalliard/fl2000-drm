@@ -14,9 +14,10 @@ IT66121 component is available, and connect the pieces:
   GPU and it never appears on this output
 - mode validation and PLL search in the CRTC's atomic_check (which may
   adjust htotal and the clock in adjusted_mode), and FL2000 programming
-  in mode_set_nofb, before the bridge's mode_set. The htotal
-  adjustment is only used for the VGA output: digital sinks are only
-  offered the modes the PLL hits with the standard timings
+  in mode_set_nofb, before the bridge's mode_set. The PLL cannot make
+  most pixel clocks exactly: digital sinks are only offered modes it
+  hits within 500 ppm, while the VGA output accepts 5000 ppm, since an
+  analog monitor does not notice that but does notice a changed htotal
 - the analog VGA output of the chip, which adapters with a VGA
   connector expose next to the HDMI one: a DAC encoder and a VGA
   connector on the same CRTC (the two encoders are clones of each
