@@ -124,7 +124,8 @@ if [ "$FOUND" = 1 ]; then
 	# p.ej. el LG lista 1920x1080@59.94 y "1920x1080-60" no haria match
 	MODES=${FL2000_TEST_MODE:-$(modetest -M fl2000 -c 2>/dev/null | awk '/#0 /{print $2; exit}')}
 	if [ -n "${CONN:-}" ] && [ -n "${MODES:-}" ]; then
-		for MODE in $MODES; do
+		# modetest names are lower case: accept 1366X768 too
+		for MODE in $(echo "$MODES" | tr X x); do
 			step "PRUEBA DE MODESET: patron de colores 12s en conector $CONN modo $MODE"
 			echo ">>> MIRA EL MONITOR AHORA - deberian verse barras de colores <<<"
 			sleep 12 | modetest -M fl2000 -s "$CONN:$MODE" 2>&1
