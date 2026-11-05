@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Frame streaming. The pixel data is sent as one bulk transfer per frame on
- * endpoint 1 OUT, after switching the AV control interface (#0) to
- * altsetting 1. The hardware exposes endpoint #1 on more than one interface,
- * which the USB specification only allows across alternate settings.
+ * endpoint 1 OUT, followed by a zero-length packet that ends the frame, after
+ * switching the AV control interface (#0) to altsetting 1. The hardware
+ * exposes endpoint #1 on more than one interface, which the USB specification
+ * only allows across alternate settings.
  *
  * The current frame lives in a shadow buffer, already in the device's pixel
  * format. Damage is converted into the shadow and nowhere else, and every
@@ -300,6 +301,38 @@ static void fl2000_stream_data_completion(struct urb *urb)
 	usb_free_urb(urb);
 }
 
+/* The end-of-frame packet carries no buffer: only its errors matter */
+static void fl2000_stream_eof_completion(struct urb *urb)
+{
+	fl2000_urb_status(urb->dev, urb->status);
+
+	usb_free_urb(urb);
+}
+
+/*
+ * Anchor and submit one URB. Its completion frees it; one that could not be
+ * submitted is freed here.
+ */
+static int fl2000_stream_submit(struct fl2000_stream *stream, struct urb *urb)
+{
+	int ret;
+
+	usb_anchor_urb(urb, &stream->anchor);
+	ret = fl2000_submit_urb(urb);
+	if (ret) {
+		/*
+		 * A URB that was never submitted stays on the anchor. Freeing
+		 * it there leaves a dangling entry that
+		 * usb_kill_anchored_urbs() would spin on forever, which hangs
+		 * the machine when the adapter is unplugged while streaming.
+		 */
+		usb_unanchor_urb(urb);
+		usb_free_urb(urb);
+	}
+
+	return ret;
+}
+
 /*
  * Frame layout. The FL2000 expects the two 32-bit halves of every 64-bit word
  * of the frame swapped, and the frame is one flat stream: a line does not start
@@ -517,7 +550,7 @@ static void fl2000_stream_work(struct work_struct *work)
 	struct fl2000_stream *stream = container_of(work, struct fl2000_stream, work);
 	struct usb_device *usb_dev = stream->usb_dev;
 	struct fl2000_stream_buf *cur_sb;
-	struct urb *data_urb;
+	struct urb *data_urb, *eof_urb;
 
 	while (READ_ONCE(stream->enabled)) {
 		/* Interruptible sleep: an idle stream may wait here indefinitely */
@@ -563,7 +596,10 @@ static void fl2000_stream_work(struct work_struct *work)
 		spin_unlock_irq(&stream->list_lock);
 
 		data_urb = usb_alloc_urb(0, GFP_KERNEL);
-		if (!data_urb) {
+		eof_urb = usb_alloc_urb(0, GFP_KERNEL);
+		if (!data_urb || !eof_urb) {
+			usb_free_urb(data_urb);
+			usb_free_urb(eof_urb);
 			dev_err(&usb_dev->dev, "Data URB allocation error\n");
 			WRITE_ONCE(stream->enabled, false);
 			return;
@@ -578,21 +614,28 @@ static void fl2000_stream_work(struct work_struct *work)
 		data_urb->interval = 0;
 		data_urb->sg = cur_sb->sgt.sgl;
 		data_urb->num_sgs = cur_sb->sgt.nents;
-		data_urb->transfer_flags |= URB_ZERO_PACKET;
 
-		usb_anchor_urb(data_urb, &stream->anchor);
-		ret = fl2000_submit_urb(data_urb);
+		/*
+		 * The device ends a frame at a zero-length packet
+		 * (FL2000_VGA_CTRL_ACLK_USE_ZERO_PKT_LEN), so send one of its
+		 * own after every frame, as the vendor driver does.
+		 * URB_ZERO_PACKET is not enough: it only adds the packet when
+		 * the frame is a whole number of packets. Any other frame
+		 * (1366x768 at 3 bytes per pixel is 3073.5 packets of 1024
+		 * bytes) ends in a short packet, the device never sees the end
+		 * of the frame, and the screen stays black while the device
+		 * drains data at one pixel per clock, blanking included.
+		 */
+		usb_fill_bulk_urb(eof_urb, usb_dev, usb_sndbulkpipe(usb_dev, 1), NULL, 0,
+				  fl2000_stream_eof_completion, stream);
+
+		ret = fl2000_stream_submit(stream, data_urb);
+		if (ret)
+			usb_free_urb(eof_urb);
+		else
+			ret = fl2000_stream_submit(stream, eof_urb);
 		if (ret) {
 			dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
-			/*
-			 * A URB that was never submitted stays on the anchor.
-			 * Freeing it there leaves a dangling entry that
-			 * usb_kill_anchored_urbs() would spin on forever,
-			 * which hangs the machine when the adapter is
-			 * unplugged while streaming.
-			 */
-			usb_unanchor_urb(data_urb);
-			usb_free_urb(data_urb);
 			WRITE_ONCE(stream->enabled, false);
 		}
 	}
