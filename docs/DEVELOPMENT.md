@@ -150,6 +150,29 @@ State on the `integration` branch after the work of that day:
   reload after a GPU is added; the `gpu-added` handler was not read. Workaround:
   plug the dongle in before logging in, or log out and in.
 
+Research of 5 Nov 2026 (two read-only agents, plus the journal of every unplug):
+
+- Unplug crashes of gnome-shell are intermittent with the *same* module: 3 of
+  about 10 unplugs between 27 Oct and 5 Nov (`libmutter` null dereference at
+  0x18 in the KMS thread, or 0x7c in the main thread), the rest clean, so no
+  driver version avoids it. Mutter 51.1 has also crashed once with no unplug.
+- Mutter has no fix and no open work for removing a GPU object (#710, #17); the
+  only merged change (!713) stops the crash on removal but keeps the object.
+  gud (notro/gud#13) and the other FL2000 driver (vfox888-cpu/alpha-fl2000)
+  report the same: a replug works only when the kernel hands out a new node,
+  and the advice is to log out before unplugging.
+- Kernel side: DRM minors are not recycled "immediately" according to
+  `Documentation/gpu/drm-uapi.rst`, but `drm_minor_alloc()` uses `xa_alloc()`
+  and reuses the lowest free number (the number is released at the last
+  `drm_dev_put()`). A cyclic allocation would be a small core change in line
+  with the documentation; nobody has proposed it and it is not known whether it
+  would help (it depends on whether Mutter's key is the path or the open fd).
+  A driver may mark the connector disconnected and send a hotplug event before
+  `drm_dev_unplug()` (the uAPI documents it); udl, gud and gm12u320 do not.
+  Keeping the DRM device alive across an unplug contradicts the uAPI text.
+- The interrupt work could run after `drm_dev_unplug()` and send a hotplug
+  event for a removed node; it is now stopped first.
+
 Tried without effect on the Mutter side (do not retry): probing the connector
 before `drm_dev_register()`; synthetic `HOTPLUG=1` uevents on the dongle and on
 amdgpu (`echo "change <UUID> HOTPLUG=1" > /sys/class/drm/cardN/uevent`: the
