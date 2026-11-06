@@ -14,7 +14,7 @@ salen de leer el código de cada repositorio en esa fecha.
 | VGA | **sí**, junto al HDMI (nov-2026) | no | **sí** | **sí** (detección por carga) | no |
 | EDID por el bus I²C del FL2000 (0x50) | **sí** (desde jul-2026) | no (solo DDC del IT66121) | conector VGA con DDC | no | **sí** (desde oct-2026) |
 | `simple_display_pipe` (obsoleto) | quitado | quitado | quitado | no lo usa | no lo usa |
-| Bridge sin conector (`ATTACH_NO_CONNECTOR`) | no | sí | sí | — | — |
+| Bridge sin conector (`ATTACH_NO_CONNECTOR`) | **sí** (5-nov) | sí | sí | — | — |
 | `usb_driver_claim_interface` (una interfaz reclama las otras) | no | sí | sí | no | no |
 | Helpers de conversión `drm_fb_xrgb8888_to_*` | **sí** | no (SIMD propio) | **sí** | no (propio, con test) | no |
 | fbdev (`drm_client_setup`) | sí | sí | sí | sí | sí |
@@ -53,8 +53,10 @@ salen de leer el código de cada repositorio en esa fecha.
 3. ~~**El arreglo del signo en el ajuste de htotal**~~ **hecho para VGA**
    (rhgndf lo encontró); en HDMI queda pendiente de probar con un monitor, ver
    `docs/pending/htotal-hdmi.md`.
-4. **Bridge con `DRM_BRIDGE_ATTACH_NO_CONNECTOR` + `drm_bridge_connector`**.
-   El EDID del bus del FL2000 se puede ofrecer por `.edid_read` del bridge.
+4. ~~**Bridge con `DRM_BRIDGE_ATTACH_NO_CONNECTOR` + `drm_bridge_connector`**~~
+   **hecho** (5-nov): el EDID de los dos caminos DDC sale por `.edid_read` del
+   bridge, y los helpers que Arch no trae se compilan en el módulo como hace
+   klogg.
 5. **Una sola interfaz con `usb_driver_claim_interface()`**, el dispositivo DRM
    colgado de la interfaz USB y `drm_dev_set_dma_dev()`.
 6. ~~fbdev~~ **hecho**; faltan **suspend/resume y RGB565 por ancho de banda**.

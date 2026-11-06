@@ -61,6 +61,12 @@ April 2027), not January.
   `compat/` is never part of the upstream patches. If a future rename breaks
   the 7.1 build, add a sed rule, never an `#if` in the driver. Kernels older
   than 7.1 are not supported.
+- The HDMI connector is `drm_bridge_connector`, which Arch (and most PC
+  distribution kernels) build without. The wrapper compiles the kernel's own
+  helper sources into `fl2000.ko` from `compat/drm-helpers/<major.minor>/`
+  (`cec` and `drm_display_helper` become dependencies). For a new kernel
+  series `make` downloads them with `compat/fetch-drm-helpers.sh`: commit
+  the new directory. See `compat/README`.
 - The upstream series is generated and build-tested against **Linus master**
   (`/home/user/linux-master` in the cloud workspace), not v7.1: the driver
   source does not compile on 7.1 untranslated.
@@ -129,6 +135,13 @@ that). Leave the dongle unplugged ~10 s first and verify with
 - **Framebuffers must use GEM SHMEM, not GEM DMA/CMA.** A 1080p buffer needs
   ~8.3 MB physically contiguous, which cannot be allocated on x86 without CMA.
   The device never DMAs the framebuffer — the CPU repacks it into URB buffers.
+- **The IT66121 bridge creates no connector** (`DRM_BRIDGE_ATTACH_NO_CONNECTOR`):
+  `fl2000_drm_bind()` makes the HDMI connector with `drm_bridge_connector_init()`,
+  and the bridge only reports `.detect` and `.edid_read`. The EDID cache lives
+  in the bridge (it hands out copies; `.detect` marks it stale when HPD drops),
+  and the mode is programmed in `atomic_enable`, where the connector that says
+  HDMI or DVI is known from the atomic state. No `DRM_BRIDGE_OP_HPD`: the
+  interrupt comes through the FL2000, so the connector is polled.
 - **`bridge->dev` is NULL while the bridge is detached.** Use `&priv->client->dev`
   in the polling work and logging.
 - **EDID comes from the direct FL2000-bus DDC path**, not the IT66121 EDID FIFO
@@ -214,14 +227,14 @@ that). Leave the dongle unplugged ~10 s first and verify with
 
 ## Open issues
 
-0. **VGA output** (5 Nov 2026): the code is in `fl2000_vga.c`, see
+0. **VGA output works** (5 Nov 2026): the code is in `fl2000_vga.c`, see
    `docs/DEVELOPMENT.md`, "VGA output". Tested with the LG 19EN43: the
-   connector is `connected` by itself with nothing on HDMI, and GNOME works at
-   1024x768, 1280x720, 1280x768 and 1280x800. 1366x768 works too (issue 7), GTT stayed
-   flat over 10 min (94 -> 86 MB), and unplugging/replugging the VGA cable
-   works without errors (5 Nov). Still to check: the HDMI connector keeps working with an HDMI monitor
-   (59.94 Hz 1080p, VGA disconnected). VGA-only adapters without an IT66121
-   are not supported.
+   connector is `connected` by itself with nothing on HDMI; GNOME works at
+   1024x768, 1280x720, 1280x768, 1280x800 and the panel's native 1366x768
+   (issue 7); GTT stayed flat over 10 min (94 -> 86 MB); unplugging and
+   replugging the VGA cable works without errors; and HDMI still works next
+   to it (1080p, GNOME switches between the two without logging out).
+   VGA-only adapters without an IT66121 are not supported.
 1. **Hot replug.** Unplug and replug are clean in the kernel, the colour-bar
    test works afterwards (`docs/field-test-15_04.log`). Under GNOME the result
    depends on the DRM node number: with Mutter 51.1 a replug that gets a new
@@ -256,7 +269,7 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 verified the same evening: GNOME at 1366x768 whole and correct, still zero-copy (AR30 imported, pitch 5632), 60 sent/s, 8.7 ms per full frame, GTT 94 MB.** Still to check: 1080p on HDMI.
+7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 verified the same evening: GNOME at 1366x768 whole and correct, still zero-copy (AR30 imported, pitch 5632), 60 sent/s, 8.7 ms per full frame, GTT 94 MB.** HDMI 1080p also checked the same evening (59 sent/s, GNOME switched VGA<->HDMI without logging out).
    The frames had no end (see the zero-length URB invariant; commit 627c569),
    and the conversion at that width fell off the streaming-load path (78 ms
    per frame; commit b22b48e). To verify, from a real TTY:
@@ -269,20 +282,21 @@ that). Leave the dongle unplugged ~10 s first and verify with
    the monitor. Details and rejected theories: `docs/DEVELOPMENT.md`, "VGA
    output".
 8. **Upstream review items still open** (done: simple pipe removed, shadow
-   plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable):
-   - `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`. Blocked for
-     the out-of-tree build: `CONFIG_DRM_BRIDGE_CONNECTOR` is only selected by
-     ARM drivers, so x86 distro kernels may lack `drm_bridge_connector_init()`
-     (klogg vendors the helper sources for that). Checked 5 Nov: the
-     Arch 7.2.11 kernel has neither `DRM_BRIDGE_CONNECTOR` nor `DRM_ITE_IT66121`.
+   plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable,
+   and on 5 Nov `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`
+   with the mode programmed in `atomic_enable`, NOT yet tested on hardware:
+   check HDMI with and without EDID, HDMI plug/unplug, VGA, and that
+   `HDMI-A-n` keeps its name):
    - reuse the in-tree `ite-it66121` bridge (asked in the RFC cover letter)
    - no component framework (`drm_bridge_attach()` from probe), a single
      interface plus `usb_driver_claim_interface()`, DRM device parented to the
      USB interface with `drm_dev_set_dma_dev()`. This is the riskiest rework:
      it replaces the lifetime model behind the crash fixes in "Non-obvious
      invariants".
-   - real suspend/resume (`drm_mode_config_helper_suspend()`), bridge
-     `mode_set` → atomic hooks, `DRM_BRIDGE_OP_HDMI` infoframes.
+   - real suspend/resume (`drm_mode_config_helper_suspend()`),
+     `DRM_BRIDGE_OP_HDMI` infoframes (the AVI infoframe is still written by
+     hand), and maybe `DRM_BRIDGE_OP_HPD` (question 2 of the cover letter).
+     Arch 7.2.11 has no `DRM_ITE_IT66121` either.
    Listed in `docs/UPSTREAMING.md` section 6.
    `Documentation/process/coding-assistants.rst` asks for an `Assisted-by:`
    tag on AI-assisted kernel patches. `make-upstream-series.sh` adds it only

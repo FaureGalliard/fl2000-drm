@@ -293,13 +293,14 @@ los plantea.
    en este adaptador nunca funciona porque el DDC del monitor cuelga del bus
    I²C del FL2000. La carta propone instanciarlo desde el driver USB con un
    *software node* y usar `drm_bridge_connector` con el DDC del FL2000.
-2. **Bridge sin conector propio** (`DRM_BRIDGE_ATTACH_NO_CONNECTOR` +
-   `drm_bridge_connector`). Para compilar fuera del árbol hace falta
-   `CONFIG_DRM_BRIDGE_CONNECTOR`, que en x86 solo está activo si algún driver
-   lo selecciona. Compruébalo en tu laptop con
-   `zgrep DRM_BRIDGE_CONNECTOR /proc/config.gz` antes de hacerlo.
-3. **Callbacks antiguos que quedan en el bridge** (`mode_set`) e infoframes a
-   mano: lo moderno es `DRM_BRIDGE_OP_HDMI`.
+2. ~~**Bridge sin conector propio**~~ **hecho** (5 nov 2026, falta probarlo en
+   hardware): el IT66121 se engancha con `DRM_BRIDGE_ATTACH_NO_CONNECTOR`, el
+   conector HDMI sale de `drm_bridge_connector_init()` y el modo se programa en
+   `atomic_enable`, como en `ite-it66121`. El kernel de Arch no trae
+   `CONFIG_DRM_BRIDGE_CONNECTOR`; para compilar fuera del árbol se meten en el
+   módulo las fuentes oficiales de `compat/drm-helpers/` (ver `compat/README`).
+3. **Infoframes a mano**: lo moderno es `DRM_BRIDGE_OP_HDMI`. Ya no queda
+   `mode_set` en el bridge.
 4. **Estado compartido en el `struct usb_device`.** El regmap, el adaptador
    I²C y el IT66121 se guardan como `drvdata`/devres del dispositivo USB, que
    pertenece al driver genérico `usb` y no a una interfaz nuestra. Es lo que

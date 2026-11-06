@@ -171,6 +171,47 @@ at 165 MHz by policy since there is no datasheet; the polarity of the sync
 bits (0x8004 bits 2/3) is never programmed (they reset to 1) and may matter to
 very old monitors.
 
+## HDMI connector from drm_bridge_connector (5 November 2026)
+
+The IT66121 bridge no longer creates its connector. It attaches with
+`DRM_BRIDGE_ATTACH_NO_CONNECTOR`, declares `DRM_BRIDGE_OP_DETECT |
+DRM_BRIDGE_OP_EDID` and type HDMI-A, and `fl2000_drm_bind()` builds the
+connector with `drm_bridge_connector_init()`, as `Documentation` asks of new
+display drivers (`drm_bridge.c`, "new model"). What changed in behaviour, and
+what the hardware test has to look at:
+
+- **The mode is programmed in the bridge's `atomic_enable`**, not in
+  `.mode_set`: HDMI or DVI comes from `connector->display_info.is_hdmi` of the
+  connector found in the atomic state, as in the in-tree `ite-it66121`. The
+  atomic helpers enable the CRTC (stream start) before the bridge, so the
+  IT66121 is now set up while pixels already flow; before, it was set up before
+  the stream started. A monitor without a readable EDID now gets DVI mode (it
+  used to get HDMI mode with an infoframe).
+- **The HDMI connector is polled every 10 s** (`DRM_CONNECTOR_POLL_CONNECT |
+  DISCONNECT`): one HPD register read on the shared I2C bus. Before, it was
+  only probed on hotplug events and by userspace. No `DRM_BRIDGE_OP_HPD`: the
+  IT66121 interrupt reaches the host through the FL2000 interrupt endpoint,
+  which still sends a device-wide hotplug event (`fl2000_drm_hotplug()`).
+- **The EDID cache stays in the bridge**: `.edid_read` hands out a copy and
+  reads again only when `.detect` saw HPD low, so the one-read-per-connection
+  fix for the desktop stall is kept. The connector calls `.detect` before every
+  EDID request.
+- **Out-of-tree builds compile the helpers into the module** on kernels built
+  without `CONFIG_DRM_BRIDGE_CONNECTOR` (Arch 7.2.11 lacks it and the HDMI
+  state, audio and CEC helpers it calls). The four files are the kernel's own,
+  unchanged (`compat/drm-helpers/7.2/`, from v7.2.11); they compiled without a
+  warning and resolved every symbol, `fl2000.ko` then depends on `cec` and
+  `drm_display_helper`, and none of their 15 exported symbols exists in the
+  running kernel. 7.2 and 7.4-rc1 `drm_bridge_connector.c` differ only for
+  `DRM_BRIDGE_OP_HDMI` bridges, so the Arch test stands for 7.4.
+
+HDMI check of the same day, before this change (module 9ECE56DA, with the
+mapped import): 1920x1080 on the LG 22MP55 at 59 sent/s, and GNOME switched
+from VGA to HDMI and back without logging out. One sample gave 19.9 ms per
+full-frame conversion at 1080p, against ~9 ms from VRAM on 27 Oct: the
+compositor's buffer now sits in GTT. Plenty for a desktop; re-measure while
+dragging a window before drawing conclusions.
+
 ## Decoding the driver's DDC messages
 
 `it66121_wait_ddc_ready()` logs the raw `IT66121_DDC_STATUS` (0x16) register:
