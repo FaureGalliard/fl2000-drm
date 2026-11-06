@@ -34,14 +34,18 @@ feedback on before doing the larger reworks:
 
 1. IT66121 support. The series carries its own small IT66121 bridge
    (fl2000_it66121.c) instead of reusing drivers/gpu/drm/bridge/
-   ite-it66121.c. The in-tree driver is probed from device tree and
-   reads EDID through the IT66121 DDC engine, but on the tested adapter
-   the monitor's DDC lines are wired to the FL2000 I2C bus and the
-   IT66121 DDC engine never completes an EDID read. What would be the
-   preferred direction: instantiate ite-it66121 from the USB driver
-   (software node) and let it attach with DRM_BRIDGE_ATTACH_NO_CONNECTOR
-   while the FL2000 side provides the DDC adapter to a bridge connector,
-   or keep the IT66121 handling private to this driver?
+   ite-it66121.c, because I could not find a way to use the in-tree
+   driver on a PC: it depends on OF (x86 distribution kernels have no
+   CONFIG_OF), reads bus-width and its next bridge through of_graph,
+   requires a reset GPIO the FL2000 boards do not have, and DRM has no
+   bridge lookup without OF. It also reads the EDID through its DDC
+   engine, which on these boards is not connected to the monitor (the
+   EDID is read with the FL2000 I2C engine instead).
+   Reusing it would take converting ite-it66121 to the fwnode API with an
+   optional reset GPIO, a fwnode-based bridge lookup in drm_bridge.c, and
+   a small bridge of this driver providing the EDID. Is that the direction
+   you would like, or is a private IT66121 bridge acceptable for a USB
+   device like this one?
 
 2. Hotplug. The bridge attaches with DRM_BRIDGE_ATTACH_NO_CONNECTOR and
    the HDMI connector comes from drm_bridge_connector. The bridge
