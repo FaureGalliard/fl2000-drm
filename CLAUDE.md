@@ -41,12 +41,14 @@ The race is on: klogg, rhgndf (Jie Feng), Samuv5 and vfox888 all have active
 FL2000 drivers (`docs/COMPARISON.md`). The goal of this fork is to follow the
 newest kernel API so it is the one maintainers can take.
 
-**Coordinate with the original author before posting anything.** Artem
-Mygaiev (klogg) resumed work in Oct 2026: he dropped simple-pipe, adapted the
-in-tree IT66121 driver, and said in klogg/fl2000_drm#86 that he will upstream
-the IT66121 work himself. See `docs/UPSTREAMING.md` section 0b, and that
-file's timeline section: the earliest realistic mainline release is 7.6 (late
-April 2027), not January.
+**The maintainer submits this driver himself and intends to maintain it**
+(decided 5 Nov 2026; no coordination with klogg). Artem Mygaiev (klogg), the
+original author, resumed his own fork in Oct 2026 and said in
+klogg/fl2000_drm#86 that he would upstream IT66121 work; as of 5 Nov he has
+posted nothing, and his IT66121 is a local rewrite of the in-tree driver with
+non-upstream interfaces (see `docs/COMPARISON.md`). His copyright lines stay
+in the files he wrote. The earliest realistic mainline release is 7.6 (late
+April 2027), see `docs/UPSTREAMING.md`.
 
 ## Environment
 
