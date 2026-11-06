@@ -42,30 +42,6 @@ enum fl2000_interface {
 	FL2000_USBIF_INTERRUPT = 2,
 };
 
-/* Process context only: may sleep between retries */
-static inline int fl2000_submit_urb(struct urb *urb)
-{
-	int ret;
-	int attempts = 10;
-
-	do {
-		ret = usb_submit_urb(urb, GFP_KERNEL);
-		switch (ret) {
-		case -ENXIO:
-		case -ENOMEM:
-			if (attempts--) {
-				cond_resched();
-				ret = -EAGAIN;
-			}
-			break;
-		default:
-			break;
-		}
-	} while (ret == -EAGAIN);
-
-	return ret;
-}
-
 /* Called from URB completion handlers, i.e. in atomic context */
 static inline int fl2000_urb_status(struct usb_device *usb_dev, int status)
 {

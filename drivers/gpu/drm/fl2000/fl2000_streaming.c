@@ -32,7 +32,7 @@
 #define FL2000_SB_MIN 3
 #define FL2000_SB_NUM (FL2000_SB_MIN * 2)
 
-#define FL2000_URB_TIMEOUT 100
+#define FL2000_SUBMIT_ATTEMPTS 10
 
 /*
  * How many shadow generations of damage history are kept. A buffer further
@@ -311,14 +311,21 @@ static void fl2000_stream_eof_completion(struct urb *urb)
 
 /*
  * Anchor and submit one URB. Its completion frees it; one that could not be
- * submitted is freed here.
+ * submitted is freed here. Process context only: it sleeps between retries of
+ * what can go away by itself, no memory (-ENOMEM) or no DMA mapping (-EAGAIN).
  */
 static int fl2000_stream_submit(struct fl2000_stream *stream, struct urb *urb)
 {
+	int attempts = FL2000_SUBMIT_ATTEMPTS;
 	int ret;
 
 	usb_anchor_urb(urb, &stream->anchor);
-	ret = fl2000_submit_urb(urb);
+	for (;;) {
+		ret = usb_submit_urb(urb, GFP_KERNEL);
+		if ((ret != -ENOMEM && ret != -EAGAIN) || !--attempts)
+			break;
+		usleep_range(1000, 2000);
+	}
 	if (ret) {
 		/*
 		 * A URB that was never submitted stays on the anchor. Freeing
