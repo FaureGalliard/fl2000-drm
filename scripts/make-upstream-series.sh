@@ -164,7 +164,10 @@ git format-patch -q --cover-letter --base="$BASE" "${VERSION_ARG[@]}" \
 # the subject, the rest replaces the *** BLURB HERE *** placeholder.
 COVER="$(ls "$OUT"/*0000-cover-letter.patch)"
 SUBJECT="$(head -n1 "$REPO/docs/upstream/cover-letter.txt")"
+# b4 adds its own closing; git format-patch does not
 BLURB="$(tail -n +3 "$REPO/docs/upstream/cover-letter.txt")
+
+Thanks,
 $NAME"
 SUBJECT="$SUBJECT" BLURB="$BLURB" perl -0pi -e '
 	s/\*\*\* SUBJECT HERE \*\*\*/$ENV{SUBJECT}/;

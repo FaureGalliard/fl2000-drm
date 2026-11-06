@@ -72,6 +72,14 @@ feedback on before doing the larger reworks:
    shadow frame. Would a helper that reads its source through
    drm_memcpy_from_wc() be welcome, so this could go away?
 
+5. VGA detection. The chip has a single monitor sense input, which on
+   the adapter I have follows whichever monitor is plugged in, HDMI or
+   VGA. The VGA connector therefore reports a monitor when the chip
+   senses one and the IT66121 hot plug line is low, which means a
+   monitor on VGA is not reported while one is on HDMI (clone mode
+   needs video=VGA-1:e). Is this an acceptable way to do it, and is
+   there a better signal I should look for in the chip?
+
 The rest of the pipeline follows the current helpers: regular atomic
 plane/CRTC/encoder objects with managed initialisation, a cursor plane
 blended by the CPU, GEM SHMEM with shadow-plane access, the DRM vblank
@@ -84,21 +92,13 @@ compression), has not been tested on hardware; and adapters with a VGA
 connector only, without an IT66121, are not supported: the analog output
 is only added next to the HDMI one.
 
-5. VGA detection. The chip has a single monitor sense input, which on
-   the adapter I have follows whichever monitor is plugged in, HDMI or
-   VGA. The VGA connector therefore reports a monitor when the chip
-   senses one and the IT66121 hot plug line is low, which means a
-   monitor on VGA is not reported while one is on HDMI (clone mode
-   needs video=VGA-1:e). Is this an acceptable way to do it, and is
-   there a better signal I should look for in the chip?
-
 Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
 adapter with HDMI and VGA connectors: a 1920x1080 monitor on HDMI, and
 an old 1366x768 monitor without a usable EDID on VGA. EDID, mode
 setting, the desktop and the cursor work, at 59 frames per second on
 the link.
 Every patch builds without warnings with W=1 on top of drm-misc-next,
-and the series passes checkpatch --strict.
+sparse is clean, and the series passes checkpatch --strict.
 
 Tool use, as described in Documentation/process/generated-content.rst: I
 used an AI coding assistant (Claude Code with Anthropic Claude models)
@@ -109,5 +109,3 @@ and draft the commit messages and this letter. I reviewed the result and
 tested it on the hardware described above; the Signed-off-by lines are
 mine. The series was generated and checked (per-patch builds, checkpatch)
 by scripts in the out-of-tree repository this driver is developed in.
-
-Thanks,
