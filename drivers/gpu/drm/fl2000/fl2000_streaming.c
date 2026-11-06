@@ -740,26 +740,29 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
  * frame. The shadow is the only thing written here, so it is always the
  * complete current frame: an update can never be lost because no URB buffer
  * happened to be free.
+ *
+ * @src is the part of the framebuffer that the mode shows, as the framebuffer
+ * can be larger than the mode, and @clip the damage. Both are in whole pixels of
+ * the framebuffer.
  */
 void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
-			    bool imported, u32 format, unsigned int width, unsigned int height,
-			    unsigned int pitch, const struct drm_rect *clip)
+			    bool imported, u32 format, unsigned int pitch,
+			    const struct drm_rect *src, const struct drm_rect *clip)
 {
 	bool wc = imported || src_map->is_iomem;
+	struct drm_rect rect = *clip;
 	u32 dst_line_len;
 	u32 x_start, x_end, y_start, y_end;
 	size_t span;
+	int x1;
 
-	x_start = min_t(u32, max_t(int, clip->x1, 0), width);
-	x_end = min_t(u32, max_t(int, clip->x2, 0), width);
-	y_start = min_t(u32, max_t(int, clip->y1, 0), height);
-	y_end = min_t(u32, max_t(int, clip->y2, 0), height);
-	if (x_start >= x_end || y_start >= y_end)
+	if (!drm_rect_intersect(&rect, src))
 		return;
 
 	guard(mutex)(&stream->shadow_lock);
 
-	if (!stream->shadow || width != stream->width || height != stream->height)
+	if (!stream->shadow || drm_rect_width(src) != stream->width ||
+	    drm_rect_height(src) != stream->height)
 		return;
 
 	/*
@@ -767,10 +770,17 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 	 * Widening the span converts a few pixels twice, which is free next to
 	 * losing the fast path.
 	 */
-	x_start &= ~3U;
-	x_end = min(ALIGN(x_end, 4), width);
+	x1 = rect.x1 & ~3;
+	if (x1 < src->x1)
+		x1 = rect.x1;
 
-	dst_line_len = width * stream->bytes_pix;
+	/* From here on the coordinates are those of the frame */
+	x_start = x1 - src->x1;
+	x_end = min(ALIGN(rect.x2, 4), src->x2) - src->x1;
+	y_start = rect.y1 - src->y1;
+	y_end = rect.y2 - src->y1;
+
+	dst_line_len = stream->width * stream->bytes_pix;
 	span = (x_end - x_start) * sizeof(u32);
 
 	for (unsigned int y = y_start; y < y_end; y++) {
@@ -780,14 +790,14 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		 * source issues one read per pixel.
 		 */
 		fl2000_read_span(stream, src_map, wc,
-				 (size_t)y * pitch + (size_t)x_start * sizeof(u32), span);
+				 (size_t)(y + src->y1) * pitch + (size_t)x1 * sizeof(u32), span);
 
 		if (format != DRM_FORMAT_XRGB8888)
 			fl2000_xrgb2101010_to_xrgb8888_line(stream->line_buf, x_start, x_end);
 
 		switch (stream->bytes_pix) {
 		case 2:
-			fl2000_xrgb8888_to_rgb565_line(stream->shadow, (size_t)y * width,
+			fl2000_xrgb8888_to_rgb565_line(stream->shadow, (size_t)y * stream->width,
 						       stream->line_buf, x_start, x_end);
 			break;
 		case 3:

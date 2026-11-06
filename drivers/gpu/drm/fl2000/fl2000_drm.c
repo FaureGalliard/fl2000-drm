@@ -367,7 +367,7 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
 	struct drm_framebuffer *fb = plane_state->fb;
-	struct drm_rect damage;
+	struct drm_rect damage, src;
 	ktime_t start;
 	int idx;
 
@@ -382,9 +382,10 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 
 	if (drm_dev_enter(plane->dev, &idx)) {
 		start = ktime_get();
+		drm_rect_fp_to_int(&src, &plane_state->src);
 		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0],
 				       drm_gem_is_imported(fb->obj[0]), fb->format->format,
-				       fb->width, fb->height, fb->pitches[0], &damage);
+				       fb->pitches[0], &src, &damage);
 		fl2000_stream_note_render(drm_if->stream,
 					  (unsigned int)ktime_us_delta(ktime_get(), start),
 					  drm_rect_width(&damage) * drm_rect_height(&damage));

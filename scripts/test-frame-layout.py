@@ -9,7 +9,8 @@
 # a word. This script extracts the real converters, the cursor blend and the
 # rectangle copy from the driver source, builds them against a few stubs and
 # compares them, for many widths and rectangles, with an independent reference:
-# convert the frame linearly, then swap the halves of each 64-bit word.
+# convert the frame linearly, then swap the halves of each 64-bit word. The damage
+# conversion is also run with framebuffers larger than the frame they show.
 #
 #   python3 scripts/test-frame-layout.py [--mutate]
 #
@@ -27,9 +28,11 @@ SRC = os.path.join(REPO, 'drivers/gpu/drm/fl2000/fl2000_streaming.c')
 
 FUNCS = ['fl2000_blend_channel', 'fl2000_blend_cursor_rgb565_line',
          'fl2000_blend_cursor_rgb888_line', 'fl2000_blend_cursor', 'fl2000_copy_rect',
-         'fl2000_xrgb8888_to_rgb888_line', 'fl2000_xrgb8888_to_rgb565_line']
+         'fl2000_xrgb8888_to_rgb888_line', 'fl2000_xrgb8888_to_rgb565_line',
+         'fl2000_xrgb2101010_to_xrgb8888_line', 'fl2000_read_span', 'fl2000_stream_compress']
 
 PRELUDE = r'''
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,11 +44,42 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32;
 #define clamp(v, lo, hi) ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
 #define round_down(x, y) ((x) & ~((__typeof__(x))(y) - 1))
 #define round_up(x, y) ((((x) - 1) | ((__typeof__(x))(y) - 1)) + 1)
+#define ALIGN(x, a) (((x) + ((a) - 1)) & ~((__typeof__(x))(a) - 1))
+#define IS_ALIGNED(x, a) (((x) & ((__typeof__(x))(a) - 1)) == 0)
+#define guard(t) (void)
+#define FL2000_DAMAGE_LOG 16
+#define DRM_FORMAT_XRGB8888 1
+#define DRM_FORMAT_XRGB2101010 2
 struct drm_rect { int x1, y1, x2, y2; };
+static int drm_rect_width(const struct drm_rect *r) { return r->x2 - r->x1; }
+static int drm_rect_height(const struct drm_rect *r) { return r->y2 - r->y1; }
+static bool drm_rect_intersect(struct drm_rect *r, const struct drm_rect *c)
+{
+	r->x1 = max(r->x1, c->x1);
+	r->y1 = max(r->y1, c->y1);
+	r->x2 = min(r->x2, c->x2);
+	r->y2 = min(r->y2, c->y2);
+	return r->x1 < r->x2 && r->y1 < r->y2;
+}
+struct iosys_map { union { void *vaddr; void *vaddr_iomem; }; bool is_iomem; };
+#define IOSYS_MAP_INIT_VADDR(v) { .vaddr = (v), .is_iomem = false }
+static void iosys_map_incr(struct iosys_map *m, size_t n) { m->vaddr = (u8 *)m->vaddr + n; }
+static void iosys_map_memcpy_from(void *d, const struct iosys_map *m, size_t off, size_t n)
+{
+	memcpy(d, (const u8 *)m->vaddr + off, n);
+}
+static void drm_memcpy_from_wc(struct iosys_map *d, const struct iosys_map *s, unsigned long n)
+{
+	memcpy(d->vaddr, s->vaddr, n);
+}
 struct fl2000_stream {
 	u32 width, height, bytes_pix;
 	size_t buf_size;
 	void *shadow;
+	int shadow_lock;
+	u32 shadow_seq;
+	struct drm_rect damage_log[FL2000_DAMAGE_LOG];
+	u32 *line_buf;
 	u32 *cursor_argb;
 	u32 cursor_w, cursor_h;
 	int cursor_x, cursor_y;
@@ -222,6 +256,57 @@ static int test_case(u32 w, u32 h, u32 bpp)
 	return 0;
 }
 
+/* The frame shown is a window of a larger framebuffer, and only part of it changed */
+static int test_compress(u32 w, u32 h, u32 bpp, bool wc, u32 format)
+{
+	u32 sx = rndn(40), sy = rndn(9), fb_w = w + sx + rndn(40), fb_h = h + sy + rndn(9);
+	u32 pitch = (fb_w + rndn(20)) * 4;
+	size_t fb_size = (size_t)pitch * fb_h + 16, sz = frame_size(w, h, bpp);
+	u32 *fb = malloc(fb_size), *frame = malloc((size_t)w * h * 4);
+	struct fl2000_stream st = { .width = w, .height = h, .bytes_pix = bpp, .buf_size = sz };
+	struct iosys_map map = { .vaddr = fb, .is_iomem = wc };
+	struct drm_rect src = { sx, sy, sx + w, sy + h };
+	struct drm_rect clip = { rndn(fb_w), rndn(fb_h), 0, 0 };
+	u32 line_buf[4096];
+	u8 *want;
+	int d;
+
+	clip.x2 = clip.x1 + 1 + rndn(fb_w - clip.x1);
+	clip.y2 = clip.y1 + 1 + rndn(fb_h - clip.y1);
+
+	for (size_t i = 0; i < fb_size / 4; i++)
+		fb[i] = rnd();
+
+	#define PIX(x, y) fb[(size_t)(y) * (pitch / 4) + (x)]
+	#define FROM_FB(p) (format == DRM_FORMAT_XRGB8888 ? (p) : \
+			    ((((p) >> 22) & 0xFF) << 16) | ((((p) >> 12) & 0xFF) << 8) | (((p) >> 2) & 0xFF))
+
+	/* What the frame held before the update: outside the damage it must stay */
+	for (u32 y = 0; y < h; y++)
+		for (u32 x = 0; x < w; x++)
+			frame[(size_t)y * w + x] = FROM_FB(PIX(sx + x, sy + y));
+	st.shadow = ref_convert(frame, w, h, bpp);
+	st.line_buf = line_buf;
+
+	/* The update */
+	for (int y = clip.y1; y < clip.y2; y++)
+		for (int x = clip.x1; x < clip.x2; x++)
+			PIX(x, y) = rnd();
+	for (u32 y = 0; y < h; y++)
+		for (u32 x = 0; x < w; x++)
+			frame[(size_t)y * w + x] = FROM_FB(PIX(sx + x, sy + y));
+	want = ref_convert(frame, w, h, bpp);
+
+	fl2000_stream_compress(&st, &map, wc, format, pitch, &src, &clip);
+
+	d = first_diff(st.shadow, want, sz);
+	if (d >= 0)
+		return fail("compress", w, h, bpp, d);
+
+	free(st.shadow); free(want); free(frame); free(fb);
+	return 0;
+}
+
 int main(void)
 {
 	static const u32 widths[] = { 1, 2, 3, 5, 6, 7, 8, 9, 15, 16, 17, 31, 63, 64, 65, 100, 854,
@@ -234,6 +319,9 @@ int main(void)
 
 		if (test_case(w, h, bpp))
 			return 1;
+		if (test_compress(w, h, bpp, rnd() & 1,
+				  rnd() & 1 ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_XRGB2101010))
+			return 1;
 		cases++;
 	}
 	/* The native mode of the VGA test monitor and the common HDMI one */
@@ -242,14 +330,14 @@ int main(void)
 			return 1;
 		cases += 2;
 	}
-	printf("OK: %ld cases (converters, rectangle copy, cursor blend)\n", cases);
+	printf("OK: %ld cases (converters, rectangle copy, cursor blend, damage conversion)\n", cases);
 	return 0;
 }
 '''
 
 
 def extract(src, name):
-    m = re.search(r'^static [^\n;]*\b%s\(' % re.escape(name), src, re.M)
+    m = re.search(r'^(?:static |void )[^\n;]*\b%s\(' % re.escape(name), src, re.M)
     if not m:
         sys.exit('function not found in %s: %s' % (SRC, name))
     end = src.index('\n}\n', m.start()) + 3

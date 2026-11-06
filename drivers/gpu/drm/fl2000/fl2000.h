@@ -92,9 +92,9 @@ int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
 			   unsigned int height, u32 bytes_pix);
 struct drm_rect;
 struct iosys_map;
-void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
-			    bool imported, u32 format, unsigned int width, unsigned int height,
-			    unsigned int pitch, const struct drm_rect *clip);
+void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
+			    bool imported, u32 format, unsigned int pitch,
+			    const struct drm_rect *src, const struct drm_rect *clip);
 void fl2000_stream_note_render(struct fl2000_stream *stream, unsigned int conv_us,
 			       unsigned int damage_px);
 
