@@ -1,0 +1,40 @@
+Changes in v2, for the cover letter ("EDITME" of `b4 prep --edit-cover`). Check
+the hardware line against what was really tested before sending.
+
+Changes in v2:
+- Bind through interface 0 and claim the other two with
+  usb_driver_claim_interface(), with everything hanging off that binding,
+  instead of keeping shared state on the usb_device: unloading the module or
+  unbinding the driver left it all behind, pointing into freed memory. This
+  answers question 3 of v1, which is gone. There is no component framework any
+  more, the bridge is attached directly, and the DRM device hangs off the
+  interface.
+- USB resets no longer unbind the driver (.pre_reset/.post_reset).
+- Keep the stream as long as the DRM device, and guard everything that reaches
+  a register with drm_dev_enter() or drm_bridge_enter().
+- Really probe for the IT66121: the detection had its return values inverted and
+  always "found" the chip at the first address, without any transfer.
+- Reject modes larger than the limits in the CRTC check. The core only applies
+  max_width/max_height to probed modes, and a mode with an off-screen primary
+  plane could wrap the 32-bit buffer size.
+- Do not write the old shadow frame with a new geometry after a failed mode set.
+- Remove the EDID read through the IT66121 DDC engine, which never completes on
+  these boards and cannot work behind an I2C engine that reads whole dwords (each
+  read of the DDC status pops the DDC FIFO). The DDC bus release stays.
+- Honour the plane's source rectangle: a framebuffer larger than the mode froze
+  the output.
+- Set up "pixel blend mode" on both planes, as the core now warns about, and blend
+  the cursor as premultiplied, which is what compositors hand over.
+- No phantom VGA monitor from the forced monitor sense when HDMI is unplugged.
+- Acknowledge the IT66121 from the FL2000 interrupt and unmask its hot plug,
+  instead of polling it over USB ten times a second. Enable the monitor interrupts
+  at probe, not at the first mode set.
+- Keep FL2000 resets and I2C control register writes out of running I2C
+  operations.
+- Smaller fixes: URB submission retries bounded (-EAGAIN looped forever), no
+  pointer in urb->transfer_buffer, flush_kernel_vmap_range() before sending a
+  frame, I2C message validation through the adapter quirks, a lost status event
+  when clearing the LBUF flags, interrupt URB interval and endpoint, a NULL
+  dereference on allocation failure, suspend error handling.
+
+Most of these come from the Sashiko review of v1.

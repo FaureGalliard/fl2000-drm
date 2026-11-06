@@ -1,7 +1,6 @@
 drm/fl2000: Add KMS display pipeline
 
-Register the DRM device once all FL2000 interfaces are bound and the
-IT66121 component is available, and connect the pieces:
+Register the DRM device from the probe, and connect the pieces:
 
 - a primary plane, a cursor plane, a CRTC and an encoder, with GEM
   SHMEM framebuffers accessed through the shadow-plane helpers and
@@ -33,6 +32,9 @@ IT66121 component is available, and connect the pieces:
   interrupt, and fbdev emulation
 - the FL2000 interrupt endpoint, which reports monitor and IT66121
   events and triggers a hotplug event
+- system sleep and USB resets, which stop the display and start it again
+  without unbinding: the compositor does not see an unplug. The chips
+  may have lost power, so they are set up from scratch
 
 Tested on x86_64 with a UGREEN USB 3.0 adapter with HDMI and VGA
 connectors (FL2000DX + IT66121FN): a 1920x1080 monitor on HDMI and an

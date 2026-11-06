@@ -1,0 +1,166 @@
+# Result of the VM test suite (fake FL2000 on raw_gadget and dummy_hcd), driver at bd27788,
+# drm-misc-next 41ecf852c with KASAN, lockdep, kmemleak and fault injection. See docs/DEVELOPMENT.md.
+### kernel 7.4.0-rc1-vm-g34f3cff7000f
+### T01 plug: probe through one interface, device, connector, EDID
+PASS: DRM device appears (/dev/dri/card0)
+PASS: three interfaces bound
+PASS: HDMI connected
+PASS: EDID 256 bytes
+PASS: no kernel complaints: T01
+### T02 modes
+PASS: no kernel complaints: T02
+### T03 frames reach the device, correct and word-swapped
+showing 1920x1080 from a 1920x1080 framebuffer at 0,0
+PASS: frames arrive (214) for 1920x1080
+frame 1920x1080 from 0,0: OK
+PASS: frame content 1920x1080 fb 1920x1080 at 0,0 xr24
+showing 1366x768 from a 1366x768 framebuffer at 0,0
+PASS: frames arrive (682) for 1366x768
+frame 1366x768 from 0,0: OK
+PASS: frame content 1366x768 fb 1366x768 at 0,0 ar30
+PASS: no kernel complaints: T03
+### T04 framebuffer larger than the mode, with a source offset
+showing 800x600 from a 1000x700 framebuffer at 37,21
+PASS: frames arrive (1665) for 800x600
+frame 800x600 from 37,21: OK
+PASS: frame content 800x600 fb 1000x700 at 37,21 xr24
+showing 1024x768 from a 1200x800 framebuffer at 3,5
+PASS: frames arrive (2563) for 1024x768
+frame 1024x768 from 3,5: OK
+PASS: frame content 1024x768 fb 1200x800 at 3,5 ar30
+PASS: no kernel complaints: T04
+### T05 cursor plane
+PASS: cursor commits
+PASS: no kernel complaints: T05
+### T06 a huge mode with the primary plane off screen
+huge mode with off-screen primary: Invalid argument
+normal mode through the same path: accepted
+PASS: huge mode rejected
+PASS: no kernel complaints: T06
+### T07 I2C adapter validation through i2c-dev
+zero-length message: Operation n[   30.492238] i2c i2c-0: adapter quirk: no zero length (addr 0x004c, size 0, 
+write then read (register 0): accepted, value 0x54
+PASS: bad I2C messages rejected, good one reads the ID
+PASS: no kernel complaints: T07
+### T10 monitor events
+PASS: interrupt reaches the endpoint
+PASS: HDMI gone
+PASS: no VGA either
+frames=3622 bytes=9793921536 last=6220800 setif=1 resets=1 aclk=15200004 it09=fe it06=00
+PASS: VGA found
+PASS: VGA gone
+PASS: HDMI back
+frames=3778 bytes=10764366336 last=6220800 setif=1 resets=1 aclk=17200004 it09=fe it06=00
+PASS: no kernel complaints: T10
+### T11 HDMI unplugged while being driven: no phantom VGA monitor
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: HDMI gone while driven
+PASS: no phantom VGA
+PASS: real VGA seen once the CRTC is off
+PASS: no kernel complaints: T11
+### T20 unplug while streaming, with the file still open
+showing 1920x1080 from a 1920x1080 framebuffer at 0,0
+PASS: device gone after unplug
+PASS: no kernel complaints: T20
+### T21 replug
+PASS: device back after replug (/dev/dri/card0)
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: frames arrive (465) for 1024x768
+frame 1024x768 from 0,0: OK
+PASS: frame content 1024x768 fb 1024x768 at 0,0 xr24
+PASS: no kernel complaints: T21
+### T22 rmmod with the adapter plugged in, then unplug (crashed: devres on the usb_device)
+PASS: rmmod
+PASS: no I2C adapter left behind
+PASS: no I2C client left behind
+PASS: unplug after rmmod survived
+PASS: no kernel complaints: T22
+### T23 module loaded with the adapter already there
+PASS: binds when loaded late
+PASS: no kernel complaints: T23
+### T24 sysfs unbind and bind of interface 0, twice
+PASS: unbound
+PASS: all interfaces let go
+PASS: bound again
+PASS: unbound
+PASS: all interfaces let go
+PASS: bound again
+PASS: no kernel complaints: T24
+### T25 unbinding a claimed interface takes everything down, cleanly
+PASS: gone with interface 2
+PASS: all interfaces let go
+PASS: bound again
+PASS: no kernel complaints: T25
+### T26 rebind with the old device held open (was -EBUSY from drm_bridge_attach)
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: unbound with the file open and streaming
+PASS: new device with the old one still open (/dev/dri/card1)
+PASS: no kernel complaints: T26
+### T27 USB reset while streaming: same device, no unbind, frames go on
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: USBDEVFS_RESET
+PASS: same DRM device after the reset
+PASS: frames go on after the reset (1095 -> 2099)
+frames=2164 bytes=5507506176 last=2359296 setif=10 resets=2 aclk=17200004 it09=fe it06=00
+frame 1024x768 from 0,0: OK
+PASS: frame content after the reset
+PASS: no kernel complaints: T27
+### T30 allocation failures in the mode set (fail-nth)
+fail-nth: 120 injected, commits failed 22, passed 98
+PASS: fail-nth loop, the start
+fail-nth: 61 injected, commits failed 0, passed 61
+PASS: fail-nth loop, the shadow
+fail-nth: 61 injected, commits failed 0, passed 61
+PASS: fail-nth loop, the end of it
+PASS: no kernel complaints: T30
+### T31 still works after all that
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: frames arrive (23843) for 1024x768
+frame 1024x768 from 0,0: OK
+PASS: frame content 1024x768 fb 1024x768 at 0,0 xr24
+PASS: no kernel complaints: T31
+### T40 no IT66121 on the bus: a clean failed probe
+PASS: does not bind without the chip
+PASS: says why
+PASS: no I2C adapter left behind
+PASS: no kernel complaints: T40
+### T41 the chip does not answer at first
+PASS: binds after failed I2C reads
+PASS: no kernel complaints: T41
+### T42 high speed: RGB565 at 640x480
+PASS: binds on high speed
+showing 640x480 from a 640x480 framebuffer at 0,0
+PASS: frames arrive (987) for 640x480
+frame 640x480 from 0,0: OK
+PASS: frame content 640x480 fb 640x480 at 0,0 xr24
+PASS: no kernel complaints: T42
+### T60 unplug in the middle of the probe
+PASS: nothing left behind
+PASS: no interface left behind
+PASS: no kernel complaints: T60
+### T61 the same thing, with the chip not answering
+PASS: no kernel complaints: T61
+### T62 unbind and unplug during a storm of commits
+storm: 2395 commits, 2387 errors
+storm: 1579 commits, 1571 errors
+storm: 1528 commits, 1518 errors
+storm: 1867 commits, 1857 errors
+storm: 1279 commits, 1268 errors
+storm: 2347 commits, 2334 errors
+storm: 3583 commits, 3567 errors
+PASS: no kernel complaints: T62
+### T63 fbdev open and written during the unplug
+PASS: no kernel complaints: T63
+### T64 rmmod with the device open must refuse, then work
+PASS: rmmod refused with an open file
+PASS: rmmod
+PASS: no kernel complaints: T64
+### T65 no EDID: DVI, standard modes
+PASS: connected without EDID
+showing 1024x768 from a 1024x768 framebuffer at 0,0
+PASS: frames arrive (487) for 1024x768
+frame 1024x768 from 0,0: OK
+PASS: frame content 1024x768 fb 1024x768 at 0,0 xr24
+PASS: no kernel complaints: T65
+### T50 leaks
+### RESULT: 0 failures

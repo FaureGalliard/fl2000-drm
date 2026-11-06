@@ -8,12 +8,15 @@ infoframe, HDMI/DVI mode) is programmed in atomic_enable, where the
 connector that tells HDMI from DVI is known. The EDID is kept while the
 monitor stays, since reading it over USB takes about a second.
 
-EDID is first read through the IT66121 DDC engine. On the tested
-adapter, as on the Fresco Logic reference design, the monitor's DDC
-lines are wired to the FL2000 I2C bus instead and that engine never
-completes, so the driver falls back to reading the EDID at address 0x50
-directly with the FL2000 I2C engine.
+The EDID is read at address 0x50 with the FL2000 I2C engine. On the
+tested adapter, as on the Fresco Logic reference design, the monitor's
+DDC lines are wired to the FL2000 I2C bus, and the IT66121 DDC engine
+never completes. It could not work behind this I2C engine anyway, which
+transfers aligned dwords: every read of the DDC status register also
+pops a byte from the DDC FIFO, which is in the same dword. The HDCP
+engine holds that bus after a chip reset, so the driver releases it
+once before reading.
 
-The bridge is registered as a component of the FL2000 I2C adapter and
-lives as long as the USB device: re-creating it on every bind would
-leave stale pointers in the component match data across USB resets.
+The bridge is created and destroyed with the binding of the USB device.
+It is guarded with drm_bridge_enter(), since a DRM device that userspace
+keeps open after an unplug still has it in its encoder's chain.

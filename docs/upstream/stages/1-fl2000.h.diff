@@ -1,33 +1,9 @@
 --- a/fl2000.h
 +++ b/fl2000.h
-@@ -42,48 +42,6 @@
- 	FL2000_USBIF_INTERRUPT = 2,
+@@ -42,24 +42,6 @@
+ 	FL2000_USBIF_NUM,
  };
  
--/* Process context only: may sleep between retries */
--static inline int fl2000_submit_urb(struct urb *urb)
--{
--	int ret;
--	int attempts = 10;
--
--	do {
--		ret = usb_submit_urb(urb, GFP_KERNEL);
--		switch (ret) {
--		case -ENXIO:
--		case -ENOMEM:
--			if (attempts--) {
--				cond_resched();
--				ret = -EAGAIN;
--			}
--			break;
--		default:
--			break;
--		}
--	} while (ret == -EAGAIN);
--
--	return ret;
--}
--
 -/* Called from URB completion handlers, i.e. in atomic context */
 -static inline int fl2000_urb_status(struct usb_device *usb_dev, int status)
 -{
@@ -49,23 +25,24 @@
  struct fl2000_timings {
  	u32 hactive;
  	u32 htotal;
-@@ -106,61 +64,6 @@
+@@ -81,63 +63,6 @@
+ /* Polling interval and timeout in us for I2C read/write operations */
  #define I2C_RDWR_INTERVAL 200
  #define I2C_RDWR_TIMEOUT  (256 * 1000)
- 
+-
 -/* Streaming transfer task */
 -struct fl2000_stream;
 -struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev);
--void fl2000_stream_destroy(struct usb_device *usb_dev);
+-void fl2000_stream_destroy(struct fl2000_stream *stream);
 -
 -/* Streaming interface */
 -int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
 -			   unsigned int height, u32 bytes_pix);
 -struct drm_rect;
 -struct iosys_map;
--void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src,
--			    bool imported, u32 format, unsigned int width, unsigned int height,
--			    unsigned int pitch, const struct drm_rect *clip);
+-void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
+-			    bool imported, u32 format, unsigned int pitch,
+-			    const struct drm_rect *src, const struct drm_rect *clip);
 -void fl2000_stream_note_render(struct fl2000_stream *stream, unsigned int conv_us,
 -			       unsigned int damage_px);
 -
@@ -80,12 +57,14 @@
 -
 -/* Interrupt polling task */
 -struct fl2000_intr;
--struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_device *drm);
+-struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct regmap *regmap,
+-				       struct drm_device *drm);
 -void fl2000_intr_quiesce(struct fl2000_intr *intr);
 -void fl2000_intr_suspend(struct fl2000_intr *intr);
 -int fl2000_intr_resume(struct fl2000_intr *intr);
 -int fl2000_intr_monitor_connected(struct fl2000_intr *intr);
--void fl2000_intr_destroy(struct usb_device *usb_dev);
+-bool fl2000_intr_sink_changed(struct fl2000_intr *intr);
+-void fl2000_intr_destroy(struct fl2000_intr *intr);
 -
 -/* VGA output: a DAC encoder and connector next to the HDMI ones, on the same CRTC */
 -struct drm_edid;
@@ -107,19 +86,20 @@
 -		    struct drm_encoder *hdmi_encoder, struct i2c_adapter *adapter,
 -		    struct fl2000_intr *intr);
 -void fl2000_vga_sink_event(struct fl2000_vga *vga);
--
+ 
  /* I2C adapter interface creation */
- struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev);
- int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int block, size_t len);
-@@ -182,11 +85,4 @@
- int fl2000_read_status(struct usb_device *usb_dev, u32 *status);
- int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data);
+ struct i2c_adapter *fl2000_i2c_init(struct usb_interface *interface, struct regmap *regmap);
+@@ -162,13 +87,4 @@
+ int fl2000_read_status(struct regmap *regmap, u32 *status);
+ int fl2000_i2c_dword(struct regmap *regmap, bool read, u16 addr, u8 offset, u32 *data);
  
 -/* DRM device creation */
--int fl2000_drm_bind(struct device *master);
--void fl2000_drm_unbind(struct device *master);
+-struct fl2000_drm_if;
+-struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
+-					struct i2c_adapter *adapter, struct drm_bridge *bridge);
+-void fl2000_drm_destroy(struct fl2000_drm_if *drm_if);
 -void fl2000_drm_hotplug(struct drm_device *drm, u32 events);
--int fl2000_drm_suspend(struct device *master);
--int fl2000_drm_resume(struct device *master);
+-int fl2000_drm_suspend(struct fl2000_drm_if *drm_if);
+-int fl2000_drm_resume(struct fl2000_drm_if *drm_if);
 -
  #endif /* FL2000_H */

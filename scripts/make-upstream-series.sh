@@ -10,10 +10,12 @@
 #
 #   git clone https://gitlab.freedesktop.org/drm/misc/kernel.git -b drm-misc-next
 #
-# The script creates a branch "fl2000-upstream" in that tree, commits the
-# driver on top of the current HEAD, and writes the series (cover letter
-# included) to [output-dir] (default: ./outgoing). Nothing is sent: see
-# docs/UPSTREAMING.md for the review and sending steps.
+# The script creates a branch "fl2000-upstream" (or $BRANCH) in that tree,
+# commits the driver on top of the current HEAD, and writes the series (cover
+# letter included) to [output-dir] (default: ./outgoing). Nothing is sent: see
+# docs/UPSTREAMING.md for the review and sending steps. The branch is recreated:
+# once b4 tracks the series on fl2000-upstream, use another name, as the same
+# document explains.
 #
 # The driver is split into a series of patches that each build on their
 # own; docs/upstream/series/<n>.txt are their commit messages and
@@ -38,7 +40,7 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LINUX="${1:?usage: $0 <linux-tree> [output-dir]}"
 OUT="$(realpath -m "${2:-$REPO/outgoing}")"
 DRV=drivers/gpu/drm/fl2000
-BRANCH=fl2000-upstream
+BRANCH="${BRANCH:-fl2000-upstream}"
 VERSION="${VERSION:-1}"
 PREFIX="${PREFIX:-RFC PATCH}"
 

@@ -229,8 +229,7 @@ Now (commit bc351ed, verified on 5 Nov with `pm_test=devices` and a real S3 cycl
   first suspend and starts it at the first resume, and `reset_resume` is the
   same callback;
 - suspend: kill the interrupt URB, `drm_mode_config_helper_suspend()` (state
-  saved, outputs off, stream drained), stop the IT66121's 100 ms interrupt
-  polling, which otherwise ends for good at its first failed read;
+  saved, outputs off, stream drained);
 - resume: drop both register caches (a cached bit that looks set would make
   a read-modify-write skip a write the chip needs after a power loss),
   re-run the IT66121 initialisation of attach and the FL2000 reset and USB
@@ -239,6 +238,90 @@ Now (commit bc351ed, verified on 5 Nov with `pm_test=devices` and a real S3 cycl
 
 The core restores the interface altsetting after the reset of a reset-resume,
 so the streaming interface is not set again by the driver.
+
+## Review of the RFC (6 November 2026)
+
+The Sashiko AI review answered the RFC within the hour with 32 findings. Three
+were duplicates of others and the rest were checked one by one against the code
+and the kernel sources. Nearly all were real, with some severities and scenarios
+off. What it found, and what stands now:
+
+- **`it66121_i2c_probe()` never looked at the chip.** The callback of
+  `i2c_new_scanned_device()` returns nonzero for "found", and it returned 0 for
+  found and -ENODEV for not found. It also checked for
+  `I2C_FUNC_SMBUS_READ_BYTE`, which the adapter does not have, so it always
+  returned -ENODEV before any transfer: the first address was always "found",
+  with or without a chip. Our own logs had it all along (`Adapter does not support
+  I2C functions properly` right before a working bridge,
+  `docs/field-test-15_04.log`). The read now really runs, for the first time on
+  hardware, and at the very start of the probe. If an adapter does not come up,
+  look here first: `No IT66121 found` in the log.
+- **The EDID FIFO path is gone.** See "Decoding the driver's DDC messages". Each
+  connection saved ~650 ms and a `dev_err`. The abort stays, since it was always
+  what ran before the first direct read.
+- **The lifetime model changed**: one binding, on interface 0, and the other two
+  interfaces claimed from its probe. Shared state on the `struct usb_device` is
+  gone: that device stays bound to `usb_generic`, so `rmmod` or a sysfs unbind
+  released nothing and the next unplug or load crashed. The rules this replaces
+  (component must outlive bind cycles, never `component_del()` from unbind) went
+  with the component framework; the crashes they prevented in the table below
+  are the old model's. `.pre_reset`/`.post_reset` keep a USB reset (the storage
+  function's error handler asks for them, see Hardware map) from looking like an
+  unplug to the compositor.
+- **An open DRM file may outlive the binding.** The stream is `drmm` managed, so a
+  commit still on its way finds it; everything that touches a register goes through
+  `drm_dev_enter()` or, in the bridge, `drm_bridge_enter()`. A new binding gets a
+  new bridge, so the old device held open does not make the attach fail with -EBUSY.
+- **The IT66121 is no longer polled.** Ten I2C transactions a second acknowledged
+  interrupts nobody looked at. It is acknowledged when the FL2000 reports
+  `HDMI_EVENT`, and hot plug is unmasked, so a monitor should now show up at once
+  instead of within the 10 s of the connector polling, which stays as the net. Not
+  seen on hardware yet whether the line really reaches the FL2000: if not, nothing
+  is lost.
+- **`FORCE_VGA_CONNECT` hides the sense**, so it counts as no monitor. Unplugging
+  HDMI while driving it reported an empty VGA connector as connected until the
+  mode set on it cleared the force. The earlier tests hid it, plugging VGA right
+  after.
+- **The cursor is blended as premultiplied.** The formula was for straight alpha,
+  and compositors hand over premultiplied sprites: antialiased edges came out too
+  dark. Not found by the review; it asked for the blend mode property, which the
+  core now warns about (`pixel format with alpha exposed but blend mode not
+  setup`, drm-misc-next only: 7.2.11 has no such check).
+
+How it was tested, since the adapter was not at hand: a fake FL2000 + IT66121 in
+userspace, on `raw_gadget` and `dummy_hcd` in a VM running drm-misc-next with
+KASAN, lockdep, kmemleak and fault injection, and the driver unmodified. It answers
+the register, I2C and EDID traffic and checks the frames that reach the bulk
+endpoint byte by byte. 95 checks pass with no kernel complaint (`docs/vm-test-v2.log`):
+frames for every format and width, framebuffers larger than the mode, cursor,
+hot plug, unplug while streaming with the file open, replug, `rmmod` and then
+unplug, loading with the adapter present, sysfs unbind and bind of any interface,
+rebinding with the old device held open, a USB reset while streaming, unplugging
+in the middle of the probe, storms of commits during unbind, allocation failures
+all over the mode set, and no leaks. The same tests against the v1 driver crash it:
+`rmmod` then unplug, the huge mode, and a zero-length I2C message. None of this
+says anything about the real chip: the timings, the DAC, the IT66121 itself, the
+amdgpu import or GNOME. Those need the adapter.
+
+One thing seen there and left alone: `vblank wait timed out on crtc 0` from
+`drm_fb_helper_damage_work` if something is writing to the fbdev, with no compositor,
+at the moment of the unplug. The worker took its vblank reference just before the
+shutdown turned the CRTC off, in the core, and the wait then runs out.
+
+What was checked and rejected or left alone:
+
+- *A huge mode "with only the cursor plane enabled"*: `drm_crtc_helper_atomic_check()`
+  requires a primary plane. The bug is real all the same, with the primary plane
+  attached and placed off screen: an invisible plane returns before the "must cover
+  the CRTC" check. `drm_mode_validate_size()` only runs on probed modes.
+- *The xHCI temporary buffer path for `urb->transfer_buffer`*: only some
+  `xhci-plat` controllers have the quirk, and page-sized scatterlist entries do not
+  trigger it. KMSAN and host controllers with local memory do look at the field,
+  and it was a hack anyway.
+- *`urb->interval`*: harmless on xHCI, which uses its endpoint context. Nothing has
+  to be restored at all.
+- *The in-tree `ite-it66121`*: left to the maintainers' answer to question 1 of the
+  cover letter (`docs/pending/it66121-in-tree.md`).
 
 ## Decoding the driver's DDC messages
 
@@ -263,14 +346,15 @@ Values seen in the field:
   partly by our own status polling. Do not treat error bits as fatal; wait for
   `TX_DONE` or the timeout, and poll sparsely.
 
-`DDC not done (-110)` on the FIFO path followed by `EDID read ok` is the
-**expected** sequence on this hardware: the FIFO attempt fails, the direct path
-succeeds.
+The driver no longer uses the EDID command of this engine (see "Review of the
+RFC"), only the abort that releases the bus, once after each chip reset. That
+abort has always completed, so `DDC not done` in the debug log is now a surprise.
 
 ## Bug history (symptom → root cause)
 
 Each of these was a real failure observed on hardware, in the order they were
-found. All are fixed.
+found. All are fixed. The component and `usb_device` devres rows describe the model
+that was replaced in November 2026 (see "Review of the RFC").
 
 | Symptom | Root cause |
 |---|---|
@@ -402,7 +486,9 @@ commenter there describes the same DRM-parent/`i2c_del_adapter()` deadlock.
   It does not: the TTY test shows the picture. What is missing is Mutter
   adding the hot-plugged GPU's outputs to its monitor list.
 - *"The EDID FIFO path just needs better timing."* It never completes on this
-  board regardless of timing; the wiring is different (see Hardware map).
+  board regardless of timing; the wiring is different (see Hardware map). It was
+  removed in November 2026: behind this I2C engine, which reads whole dwords, each
+  poll of the DDC status (0x16) also pops the DDC FIFO (0x17).
 
 ## Verifying kernel APIs
 

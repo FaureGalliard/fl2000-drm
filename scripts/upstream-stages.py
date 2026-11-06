@@ -49,62 +49,47 @@ final_objs = ['drm', 'drv', 'i2c', 'interrupt', 'it66121', 'registers', 'streami
 if mk != makefile(final_objs):
     sys.exit('drivers/gpu/drm/fl2000/Makefile changed: update makefile() and the stages')
 
-# --- fl2000_drv.c, patches 2 and 3: IT66121 bridge, no component master ---
+# --- fl2000_drv.c, patches 2 and 3: IT66121 bridge, no DRM device ---
 d2 = drv
-d2 = cut(d2, '\tstruct component_match *match;\n')
-d2 = cut(d2, 'static const struct component_master_ops fl2000_master_ops = {',
-         'static int fl2000_compare(')
-d2 = cut(d2, 'static int fl2000_compare(', 'static struct fl2000_devs *fl2000_get_devices(')
-d2 = cut(d2, '\tcomponent_match_add(', '\tdev_set_drvdata(&usb_dev->dev, devs);')
-d2 = cut(d2, '\n\t/* When all interfaces are up - proceed with registration */',
-         '\n\treturn ret;\n}\n\nstatic void fl2000_disconnect(')
-d2 = cut(d2, '\t/*\n\t * The IT66121 bridge component is intentionally NOT destroyed here.',
-         '\tswitch (iface_num) {',
-         '\t/*\n'
-         '\t * The IT66121 bridge is intentionally NOT destroyed here: disconnect\n'
-         '\t * also runs for the transient unbind/rebind cycles of\n'
-         '\t * usb_reset_device(), where the usb_device survives. Its destruction is\n'
-         '\t * a devres of the usb_device, see fl2000_bridge_create().\n'
-         '\t */\n')
-d2 = cut(d2, '#define FL2000_ALL_IFS \\', 'static const struct usb_device_id')
-# no DRM device to suspend yet: the callbacks only keep the driver bound across sleep
-d2 = cut(d2, '\t/* The display was stopped for system sleep and has not been restarted yet */\n'
+d2 = cut(d2, '\tstruct fl2000_drm_if *drm_if;\n')
+d2 = cut(d2, '\t/* The display was stopped for system sleep or a reset and has not been restarted yet */\n'
          '\tbool suspended;\n')
+d2 = cut(d2, '\tdevs->drm_if = fl2000_drm_create(', '\tusb_set_intfdata(interface, devs);')
+d2 = cut(d2, 'err_release_interfaces:\n', 'err_destroy_bridge:')
+d2 = cut(d2, '\tfl2000_drm_destroy(devs->drm_if);\n')
+# no DRM device to suspend yet: the callbacks only keep the driver bound across sleep
 d2 = cut(d2, '/*\n * System sleep. The USB core suspends the interfaces one by one',
          'static struct usb_driver fl2000_driver = {',
          'static int fl2000_suspend(struct usb_interface *interface, pm_message_t message)\n'
          '{\n'
-         '\tstruct usb_device *usb_dev = interface_to_usbdev(interface);\n'
-         '\n'
          '\t/*\n'
          '\t * Nothing to save yet. Providing the callback keeps the USB core from\n'
          '\t * unbinding the driver across system sleep.\n'
          '\t */\n'
-         '\tdev_dbg(&usb_dev->dev, "suspend\\n");\n'
+         '\tdev_dbg(&interface->dev, "suspend\\n");\n'
          '\n'
          '\treturn 0;\n'
          '}\n'
          '\n'
          'static int fl2000_resume(struct usb_interface *interface)\n'
          '{\n'
-         '\tstruct usb_device *usb_dev = interface_to_usbdev(interface);\n'
-         '\n'
-         '\tdev_dbg(&usb_dev->dev, "resume\\n");\n'
+         '\tdev_dbg(&interface->dev, "resume\\n");\n'
          '\n'
          '\treturn 0;\n'
          '}\n'
          '\n')
 d2 = cut(d2, '\t.reset_resume = fl2000_resume,\n')
+d2 = cut(d2, '\t.pre_reset = fl2000_pre_reset,\n')
+d2 = cut(d2, '\t.post_reset = fl2000_resume,\n')
 
 # --- fl2000_drv.c, patch 1: no bridge either ---
 d1 = d2
 d1 = cut(d1, '#include "fl2000_it66121.h"\n')
-d1 = cut(d1, '\tstruct i2c_client *bridge_client;\n')
-d1 = cut(d1, 'static void fl2000_bridge_release(', 'static int fl2000_probe(')
-d1 = cut(d1, '\t/*\n\t * Create the IT66121 bridge if it does not exist yet.',
-         '\tswitch (iface_num) {')
-d1 = cut(d1, '\t/*\n\t * The IT66121 bridge is intentionally NOT destroyed here',
-         '\tswitch (iface_num) {')
+d1 = cut(d1, '\tstruct drm_bridge *bridge;\n')
+d1 = cut(d1, '\t/* The IT66121 is looked for with the I2C engine', '\tret = fl2000_claim_interfaces(')
+d1 = cut(d1, '\tif (ret)\n\t\tgoto err_destroy_bridge;\n', None, '\tif (ret)\n\t\treturn ret;\n')
+d1 = cut(d1, '\nerr_destroy_bridge:\n', '}\n\nstatic void fl2000_disconnect(')
+d1 = cut(d1, '\tit66121_destroy(devs->bridge);\n\n')
 
 # --- fl2000.h, patch 3: no interrupt or DRM device yet ---
 h3 = hdr
@@ -113,7 +98,8 @@ h3 = cut(h3, '/* DRM device creation */', '#endif /* FL2000_H */')
 
 # --- fl2000.h, patches 1 and 2: no streaming either ---
 h1 = h3
-h1 = cut(h1, '/* Process context only: may sleep between retries */', 'struct fl2000_timings {')
+h1 = cut(h1, '/* Called from URB completion handlers, i.e. in atomic context */',
+         'struct fl2000_timings {')
 h1 = cut(h1, '/* Streaming transfer task */', '/* I2C adapter interface creation */')
 
 stages = {

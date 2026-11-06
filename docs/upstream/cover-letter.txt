@@ -11,10 +11,9 @@ Today these adapters only work on Linux with out-of-tree drivers.
 The driver started as Artem Mygaiev's out-of-tree fl2000_drm driver,
 itself partly based on Fresco Logic's reference driver; their copyright
 lines are kept. I ported it to current kernels, fixed the problems found
-on real hardware (EDID, bridge lifetime across USB resets, crashes on
-disconnect, frames that were never terminated, imported buffers read
-from the wrong VRAM), added the analog VGA output and cleaned it up for
-submission.
+on real hardware (EDID, crashes on disconnect, frames that were never
+terminated, imported buffers read from the wrong VRAM), added the analog
+VGA output and cleaned it up for submission.
 
 I intend to maintain this driver for the long term: patch 1 adds a
 MAINTAINERS entry with me as maintainer, I have the hardware to test
@@ -24,7 +23,7 @@ The series builds the driver up in four steps, each of which compiles
 on its own:
 
   1. USB driver, FL2000 register access (regmap) and I2C adapter
-  2. IT66121 HDMI transmitter bridge, including the EDID fallback
+  2. IT66121 HDMI transmitter bridge
   3. frame streaming over bulk URBs
   4. the KMS pipeline, which makes the display usable, including the
      analog VGA output of adapters that have both connectors
@@ -55,14 +54,7 @@ feedback on before doing the larger reworks:
    the connector is also polled. Would reporting HPD with
    drm_bridge_hpd_notify() from that path be preferred?
 
-3. The FL2000 exposes three USB interfaces, and the state they share
-   (regmap, I2C adapter, IT66121 client, component match) is kept as
-   drvdata and devres of the struct usb_device rather than of an
-   interface, so that it survives the unbind/rebind cycles of
-   usb_reset_device(). Is there a better established pattern for a
-   multi-interface device that needs this?
-
-4. Pixel conversion. The stream converts with its own small line
+3. Pixel conversion. The stream converts with its own small line
    converters instead of drm_fb_xrgb8888_to_*(). The framebuffer is
    usually imported from the primary GPU and sits in write-combined
    VRAM; the format helpers read such I/O memory with memcpy_fromio(),
@@ -72,7 +64,7 @@ feedback on before doing the larger reworks:
    shadow frame. Would a helper that reads its source through
    drm_memcpy_from_wc() be welcome, so this could go away?
 
-5. VGA detection. The chip has a single monitor sense input, which on
+4. VGA detection. The chip has a single monitor sense input, which on
    the adapter I have follows whichever monitor is plugged in, HDMI or
    VGA. The VGA connector therefore reports a monitor when the chip
    senses one and the IT66121 hot plug line is low, which means a
@@ -84,7 +76,9 @@ The rest of the pipeline follows the current helpers: regular atomic
 plane/CRTC/encoder objects with managed initialisation, a cursor plane
 blended by the CPU, GEM SHMEM with shadow-plane access, the DRM vblank
 timer (the FL2000 has no vblank interrupt) and fbdev emulation through
-drm_client_setup().
+drm_client_setup(). On the USB side the driver matches interface 0 and
+claims the other two, everything hangs off that binding, and resets and
+system sleep do not unbind it.
 
 Other known limitations: RGB565, used when the USB link cannot carry
 RGB888 (2560x1080 on USB 3.0, 640x480 on USB 2.0, as there is no
@@ -97,8 +91,11 @@ adapter with HDMI and VGA connectors: a 1920x1080 monitor on HDMI, and
 an old 1366x768 monitor without a usable EDID on VGA. EDID, mode
 setting, the desktop and the cursor work, at 59 frames per second on
 the link.
-Every patch builds without warnings with W=1 on top of drm-misc-next,
-sparse is clean, and the series passes checkpatch --strict.
+The unplug, unbind, module removal and USB reset paths were also run
+under KASAN and lockdep against an emulated FL2000 on raw_gadget and
+dummy_hcd. Every patch builds without warnings with W=1 on top of
+drm-misc-next, sparse is clean, and the series passes checkpatch
+--strict.
 
 Tool use, as described in Documentation/process/generated-content.rst: I
 used an AI coding assistant (Claude Code with Anthropic Claude models)

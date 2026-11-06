@@ -19,9 +19,31 @@ etiqueta `sent/20261105-fl2000-upstream-3fc2e1f00d24-v1` en
 **Para la v2, no volver a ejecutar `make-upstream-series.sh` sobre la rama
 `fl2000-upstream`:** la recrea y se perdería el commit de seguimiento de b4
 (carta, destinatarios y `change-id`, que enlaza las versiones). Lo seguro es
-aplicar los cambios como commits nuevos o con `git rebase -i` dentro de esa
-rama, actualizar la carta con `EDITOR=nano b4 prep --edit-cover` (añadir
-"Changes in v2" al final) y enviar con `b4 send`, que pone `v2` solo.
+generar los cuatro parches en otra rama y llevarlos encima de ese commit:
+
+```bash
+cd ~/linux-drm-misc
+git checkout --detach 41ecf852c      # la base de la v1 (o un drm-misc-next más nuevo)
+BRANCH=fl2000-v2 CHECK_BUILD=1 ~/Projects/fl2000_drm_kernel7.1/scripts/make-upstream-series.sh . /tmp/fl2000-v2
+git checkout fl2000-upstream
+git reset --hard HEAD~4                     # deja solo el commit de seguimiento de b4
+git cherry-pick 41ecf852c..fl2000-v2
+EDITOR=nano b4 prep --edit-cover            # el texto está en docs/upstream/v2-changes.txt
+b4 prep --check                             # checkpatch y demás
+b4 send --reflect                           # primero a ti mismo
+b4 send
+```
+
+Los parches enviados siguen en la etiqueta `sent/...-v1`, así que el `reset` no
+pierde nada. b4 pone `v2` solo. No enviar antes de haberla probado en el adaptador
+ni antes de que pase una semana desde la v1 (13 de noviembre), salvo que los
+mantenedores contesten antes: `submitting-patches.rst` pide esperar y la respuesta
+a las preguntas de la carta puede cambiar el diseño.
+
+**Revisión de Sashiko (6 nov).** Un bot de revisión con IA contestó a los cuatro
+parches en menos de una hora. Su análisis y lo hecho están en
+`docs/DEVELOPMENT.md`, "Review of the RFC". No hace falta responderle en la lista:
+basta con arreglarlo en la v2 y decirlo en el registro de cambios.
 
 
 
@@ -297,23 +319,13 @@ los plantea.
    módulo las fuentes oficiales de `compat/drm-helpers/` (ver `compat/README`).
 3. **Infoframes a mano**: lo moderno es `DRM_BRIDGE_OP_HDMI`. Ya no queda
    `mode_set` en el bridge.
-4. **Estado compartido en el `struct usb_device`.** El regmap, el adaptador
-   I²C y el IT66121 se guardan como `drvdata`/devres del dispositivo USB, que
-   pertenece al driver genérico `usb` y no a una interfaz nuestra. Es lo que
-   permite sobrevivir a `usb_reset_device()`, pero es poco habitual y
-   probablemente lo cuestionen; la carta lo pregunta.
-5. **Framework de componentes.** `drivers/gpu/drm/drm_drv.c` desaconseja usar
-   componentes cuando existe una interfaz estándar como `drm_bridge`. Lo
-   esperable es crear el bridge en el probe y usar `drm_bridge_attach()`.
-6. **El dispositivo DRM cuelga del adaptador I²C.** Lo esperable es que cuelgue
-   de la interfaz USB, con
-   `drm_dev_set_dma_dev(drm, usb_intf_get_dma_device(intf))`, como hacen udl,
-   gud y appletbdrm. Afecta a PRIME y a la topología de udev.
-7. **Una interfaz y no tres.** Lo idiomático es enlazar una sola interfaz y
-   reclamar las otras con `usb_driver_claim_interface()`, con el estado ligado
-   a la interfaz o a `drmm_*`. Klogg y el PR #86 ya lo hicieron así.
+4. ~~**Estado compartido en el `struct usb_device`**~~,
+5. ~~**Framework de componentes**~~,
+6. ~~**El dispositivo DRM cuelga del adaptador I²C**~~ y
+7. ~~**Una interfaz y no tres**~~: **hechos** el 6 nov 2026, de una vez, a raíz de
+   la revisión de Sashiko: se enlaza la interfaz 0, se reclaman las otras dos con
+   `usb_driver_claim_interface()`, todo cuelga de ese enlace, el bridge se engancha
+   con `drm_bridge_attach()` y el dispositivo DRM cuelga de la interfaz, con
+   `drm_dev_set_dma_dev(drm, usb_intf_get_dma_device(intf))`. Probado en una VM con
+   KASAN y lockdep, falta el adaptador.
 8. ~~**Suspend/resume real**~~ **hecho** el 5 nov 2026 (`drm_mode_config_helper_suspend()`/`_resume()`, también `reset_resume`), falta probarlo en hardware. El ancho de banda (RGB888/RGB565) se corrigió el mismo día.
-
-Los puntos 4 a 7 son un solo cambio grande: sustituyen el modelo de ciclo de
-vida que arregló los cuelgues al desconectar (ver la tabla de bugs de
-`docs/DEVELOPMENT.md`). Hay que hacerlo con el adaptador delante.

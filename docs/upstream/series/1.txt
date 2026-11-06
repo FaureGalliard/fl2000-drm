@@ -5,15 +5,17 @@ inexpensive USB to VGA and USB to HDMI adapters (USB ID 1d5c:2000). The
 FL2000 itself outputs parallel RGB/VGA; HDMI adapters pair it with an
 ITE IT66121 HDMI transmitter that sits on the FL2000's I2C bus.
 
-This first patch adds the USB side of the driver: it binds the three
-FL2000 interfaces, describes the FL2000 registers, provides a regmap on
-top of the vendor control transfers that access them, and registers an
-I2C adapter backed by the FL2000 I2C engine. The engine only transfers
-aligned 32-bit words, so byte accesses are done as read-modify-write of
-the containing word and the adapter advertises the matching quirks.
+This first patch adds the USB side of the driver: it matches interface
+0 and claims the other two FL2000 interfaces from its probe, selects the
+altsetting that has the bulk endpoint, describes the FL2000 registers,
+provides a regmap on top of the vendor control transfers that access
+them, and registers an I2C adapter backed by the FL2000 I2C engine. The
+engine only transfers aligned 32-bit words, so byte accesses are done as
+read-modify-write of the containing word and the adapter advertises the
+matching quirks.
 
-State shared by the interfaces is attached to the usb_device so that it
-survives the unbind/rebind cycles of usb_reset_device().
+Everything hangs off the binding of interface 0 and goes away with it;
+unbinding any of the interfaces takes the others along.
 
 The driver is based on the out-of-tree fl2000_drm driver by Artem
 Mygaiev, which carries code from the Fresco Logic reference driver.

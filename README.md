@@ -125,6 +125,7 @@ fl2000_drm/
 │   ├── fl2000_i2c.c            # I2C interface
 │   ├── fl2000_interrupt.c      # Interrupt handling
 │   ├── fl2000_registers.[ch]   # Hardware registers
+│   ├── fl2000_vga.c            # Analog VGA output
 │   └── fl2000_it66121.[ch]     # IT66121 HDMI bridge
 ├── Makefile                    # Out-of-tree build wrapper
 ├── install.sh                  # Installation script
@@ -184,6 +185,10 @@ The virtual CD only contains Windows/Mac drivers, so nothing is lost.
    ```
 
 ### No display output
+
+If the log says `No IT66121 found`, the driver did not find the HDMI transmitter
+on the adapter's I2C bus and does not bind: adapters with a VGA connector only
+are not supported.
 
 1. Check EDID reading:
    ```bash
