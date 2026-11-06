@@ -7,84 +7,51 @@ Resume `Documentation/process/submitting-patches.rst`,
 `Documentation/gpu/introduction.rst` aplicados a este driver. Leer esos
 documentos antes del primer envío vale la pena; esto es el atajo.
 
-## 0. Antes de nada: qué falta probar en hardware
+## 0. Estado a 5 de noviembre de 2026
 
-**Estado a 3 de noviembre de 2026** (rama `integration`): la serie se regeneró
-sobre `drm-misc-next` en 7.4-rc1 (`2ebbeea89`), los 4 parches compilan cada uno
-por separado con `W=1` (`CHECK_BUILD=1`) y `checkpatch --strict` da 0 errores
-(solo el aviso «does MAINTAINERS need updating?» en los parches 2 a 4, porque la
-entrada ya está en el 1). Falta `sparse` (`C=1`), la comprobación SPDX de
-`checkpatch` (necesita `python-ply`) y compilar con otra arquitectura. En
-hardware: la desconexión ya no cuelga (dos arreglos, ver
-`docs/DEVELOPMENT.md`, «Unplug and replug») y la reconexión funciona al
-iniciar sesión; con la sesión abierta depende de Mutter (issue #710, sin
-arreglo). Pendiente: repetir `scripts/fl2000-field-test.sh` en un arranque
-limpio con el kernel actual, decidir el `Assisted-by:` y hablar con klogg.
+Rama `integration`, subida a GitHub. **Todo lo que entra en la serie está
+probado en el adaptador** (UGREEN HDMI+VGA, kernel 7.2.11, GNOME 51 en
+Wayland):
 
-**Actualización del 5 de noviembre (tarde):** se añadió la salida VGA
-(`fl2000_vga.c`, parche 4), se corrigió el intercambio de palabras del fotograma
-para anchos como 1366 px y se amplió la carta. El código compila sin avisos con
-`W=1` y `sparse` (`C=2`) sobre 7.4-rc1 con los fuentes nuevos, pero la serie de
-`outgoing/` es anterior: hay que **regenerarla** (la genera quien envía, por el
-`Signed-off-by`) y repetir `CHECK_BUILD=1`. Nada de esto se ha probado todavía en
-el adaptador con el módulo nuevo: probar HDMI y VGA antes de enviar.
+- HDMI a 1920x1080 (LG 22MP55) y VGA a 1366x768 nativo (LG 19EN43, sin EDID),
+  y GNOME pasa de uno a otro sin cerrar sesión. Desenchufar y volver a
+  enchufar el cable VGA funciona.
+- Los arreglos del 5 de noviembre: fin de frame con paquete de longitud cero
+  (1366x768, 800x600, etc.), importación con mapeo (búfer de amdgpu partido
+  en VRAM), lectura rápida en anchos raros. La memoria GTT se mantuvo estable.
+- El conector HDMI ahora es `drm_bridge_connector` y el IT66121 se engancha
+  sin conector propio (`DRM_BRIDGE_ATTACH_NO_CONNECTOR`).
+- Suspender y reanudar, también con *reset-resume*: probado con
+  `pm_test=devices` y con una suspensión S3 real con la sesión abierta.
+- Sin probar en hardware: RGB565 (solo se usa por encima de 2560x1080 en USB
+  3.0 o en USB 2.0, ver punto 6 de `CLAUDE.md`).
 
-El código compila sin warnings (`W=1`) y pasa `checkpatch --strict`, pero los
-cambios de esta preparación **no se han probado en el adaptador**. Antes de
-enviar hay que confirmar en el hardware real:
+El código compila sin avisos con `W=1` y `sparse` (`C=2`) en 7.2.11 y en
+drm-misc-next 7.4-rc1, `checkpatch --strict` no da avisos nuevos y las etapas
+reducidas de los parches 1-3 compilan por separado. **La serie de `outgoing/`
+y la rama `fl2000-upstream` de `~/linux-drm-misc` son anteriores a todo
+esto: hay que regenerarla** (secciones 1 y 2). La genera quien la envía, por
+el `Signed-off-by`.
 
-1. El arreglo de IRQ-starvation (commit `082a6a4`, pendiente desde antes):
-   sin lag general y `dmesg | grep -i fence` limpio.
-2. Que todo sigue igual tras la limpieza: arranque con el adaptador
-   conectado, EDID, escritorio GNOME a 1920x1080, desconectar el adaptador
-   sin cuelgue. `sudo bash scripts/fl2000-field-test.sh` desde una TTY.
-3. Los mensajes de éxito ahora son de depuración (el kernel pide drivers
-   silenciosos). Para verlos en el field test:
-   `echo 'options fl2000 dyndbg=+p' | sudo tee /etc/modprobe.d/fl2000-debug.conf`
-   (y para los de DRM, `drm.debug=0x04` en la línea del kernel).
-4. El nombre del driver DRM cambió de `fl2000_drm` a `fl2000`
-   (`modetest -M fl2000`; el script ya está actualizado).
+## 0b. klogg
 
-Opcional, pero recomendable antes de la v1: probar
-`docs/pending/0001-fix-actually-try-the-htotal-adjustments-when-searchi.patch`
-(`git am` sobre esta rama). Arregla un bug real (el modo 1920x1080 a 60.00 Hz
-se rechaza y GNOME usa 59.94 Hz), pero cambia el modo que recibe tu monitor,
-así que solo debe entrar si se ve bien en pantalla.
+Decidido el 5 de noviembre de 2026: **la serie la envías tú y piensas
+mantener el driver**; no hace falta coordinarse con Artem Mygaiev (klogg). El
+código es GPL-2.0 y se mantienen sus líneas de copyright y las de Fresco
+Logic; la carta dice de dónde viene. Hechos que conviene tener presentes:
 
-## 0b. Antes de enviar: hablar con Artem Mygaiev (klogg)
-
-Investigado el 26 de octubre de 2026:
-
-- **Nadie ha enviado nunca un driver FL2000 a las listas del kernel**, y en
-  mainline no hay soporte para FL2000. La búsqueda se hizo por índices web
-  porque lore.kernel.org no era accesible desde el entorno de preparación;
-  compruébalo tú: <https://lore.kernel.org/all/?q=fl2000> y `?q=1d5c`.
-- **Pero el autor original está activo otra vez.** Entre el 17 y el 19 de
-  octubre de 2026, Artem subió decenas de commits a
-  <https://github.com/klogg/fl2000_drm>: quitó `simple_display_pipe`, adaptó el
-  driver IT66121 del kernel, apunta a Linux 7.0 y ya hace la selección
-  RGB888/RGB565 por ancho de banda. En el PR #86
-  (<https://github.com/klogg/fl2000_drm/pull/86>) escribió que publicará en el
-  kernel "por separado" el trabajo del IT66121.
-- Samuv5 borró el 22 de octubre su modernización de mayo y junio (de la que
-  parte este fork) diciendo que "compilaba pero no funcionaba", y la ha
-  reescrito; según su README, la parte HDMI está sin probar en hardware.
-- Hay otros forks activos: rhgndf (VGA, autor del PR #86) y
-  vfox888-cpu/alpha-fl2000 (escrito desde cero).
-
-Mandar un RFC sin avisar chocaría con el autor del código del que deriva este
-driver, y eso perjudica la revisión más que cualquier detalle de estilo.
-Escríbele antes (issue o correo, `joculator@gmail.com` según el historial).
-Lo que este fork aporta y su rama no tiene probado en tu hardware:
-
-- el EDID por el bus I²C del FL2000;
-- el ciclo de vida del bridge a través de `usb_reset_device()`;
-- el arreglo del lag por IRQ;
-- las correcciones de esta preparación.
-
-Hay tres caminos razonables: que él lo envíe con tus parches (te da
-`Co-developed-by:` + `Signed-off-by:` o `Tested-by:`, y también cuenta como
-contribución al kernel), enviarlo juntos, o que te ceda el envío.
+- Hasta esa fecha nadie había enviado un driver FL2000 a las listas del
+  kernel (compruébalo antes de enviar: <https://lore.kernel.org/all/?q=fl2000>
+  y `?q=1d5c`).
+- klogg anunció en <https://github.com/klogg/fl2000_drm/pull/86> que enviaría
+  el trabajo del IT66121, pero no ha enviado nada. Su IT66121 es una reescritura
+  local del driver del kernel, que él mismo describe como no intercambiable con
+  el del kernel.
+- Reusar el `ite-it66121` del kernel no es posible en un PC sin cambiar otros
+  subsistemas (`docs/pending/it66121-in-tree.md`); la pregunta 1 de la carta
+  se lo plantea a los mantenedores.
+- Si klogg responde al RFC, lo normal es contestarle con cordialidad y
+  ofrecer `Co-developed-by:` o `Tested-by:` si aporta.
 
 ## Uso de IA
 
@@ -148,11 +115,23 @@ git config user.name  "Angel Gabriel Crispin Valdivia"
 git config user.email "angelcrispinvaldivia@gmail.com"
 ```
 
+Si el árbol ya existe (`~/linux-drm-misc`, clon superficial), ponerlo al día y
+**volver a `drm-misc-next` antes de regenerar**, o la serie nueva se apila
+encima de la vieja:
+
+```bash
+cd ~/linux-drm-misc
+git checkout drm-misc-next
+git fetch --depth=1 origin drm-misc-next
+git reset --hard origin/drm-misc-next
+make olddefconfig          # el .config ya tiene CONFIG_DRM_FL2000=m
+```
+
 ## 2. Generar la serie
 
 ```bash
-cd ~/fl2000_drm_kernel7.1
-scripts/make-upstream-series.sh ~/linux-drm-misc        # deja los .patch en ./outgoing
+cd ~/Projects/fl2000_drm_kernel7.1
+CHECK_BUILD=1 scripts/make-upstream-series.sh ~/linux-drm-misc   # deja los .patch en ./outgoing
 ```
 
 El script copia `drivers/gpu/drm/fl2000/` al árbol, añade las líneas en
@@ -219,7 +198,8 @@ b4 send                                # envío real
 
 ### Alternativa: git send-email con Gmail
 
-Gmail requiere una *contraseña de aplicación* (Cuenta de Google → Seguridad →
+En Arch, `git send-email` necesita además `sudo pacman -S perl-authen-sasl
+perl-io-socket-ssl perl-mime-tools`. Gmail requiere una *contraseña de aplicación* (Cuenta de Google → Seguridad →
 Verificación en 2 pasos → Contraseñas de aplicaciones).
 
 ```bash
