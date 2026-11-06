@@ -945,7 +945,7 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
  * fl2000_stream_create() - streaming processing context creation
  * @usb_dev: FL2000 USB device
  *
- * Called when the DRM device is set up. It shall not initiate any USB transfers:
+ * Called when the DRM device is set up. It does not initiate any USB transfers:
  * buffers and URBs are allocated later, once the mode (and thus the frame size) is
  * known.
  *
@@ -956,13 +956,7 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 	int ret;
 	struct fl2000_stream *stream;
 
-	/* Altsetting 1 on interface 0 */
-	ret = usb_set_interface(usb_dev, FL2000_USBIF_AVCONTROL, 1);
-	if (ret) {
-		dev_err(&usb_dev->dev, "Cannot set streaming interface for bulk transfers\n");
-		return ERR_PTR(ret);
-	}
-
+	/* The probe selected altsetting 1 on interface 0 */
 	ret = usb_pipe_type_check(usb_dev, usb_sndbulkpipe(usb_dev, 1));
 	if (ret) {
 		dev_err(&usb_dev->dev, "No bulk endpoint to send frames to\n");

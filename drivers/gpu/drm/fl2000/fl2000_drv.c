@@ -84,6 +84,13 @@ static int fl2000_probe(struct usb_interface *interface, const struct usb_device
 		return -ENODEV;
 	}
 
+	/* Frames go to the bulk endpoint of altsetting 1, and the chip has always been used in it */
+	ret = usb_set_interface(usb_dev, FL2000_USBIF_AVCONTROL, 1);
+	if (ret) {
+		dev_err(&interface->dev, "Cannot set streaming interface for bulk transfers\n");
+		return ret;
+	}
+
 	devs = devm_kzalloc(&interface->dev, sizeof(*devs), GFP_KERNEL);
 	if (!devs)
 		return -ENOMEM;
@@ -99,6 +106,10 @@ static int fl2000_probe(struct usb_interface *interface, const struct usb_device
 		dev_err(&interface->dev, "Cannot initialize I2C adapter (%pe)\n", devs->adapter);
 		return PTR_ERR(devs->adapter);
 	}
+
+	/* The IT66121 is looked for with the I2C engine, ready as for reading the EDID */
+	fl2000_reset(devs->regmap);
+	fl2000_usb_magic(devs->regmap);
 
 	devs->bridge = it66121_create(devs->adapter);
 	if (IS_ERR(devs->bridge))
