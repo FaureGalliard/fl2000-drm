@@ -7,7 +7,23 @@ Resume `Documentation/process/submitting-patches.rst`,
 `Documentation/gpu/introduction.rst` aplicados a este driver. Leer esos
 documentos antes del primer envío vale la pena; esto es el atajo.
 
-## 0. Estado a 5 de noviembre de 2026
+## Enviado: RFC v1 (6 de noviembre de 2026, 02:34 UTC)
+
+`[PATCH RFC 0/4] drm: Add Fresco Logic FL2000 USB display driver`, enviado
+con `b4 send` (relay web de kernel.org) a los mantenedores de drm-misc y DRM,
+`dri-devel` y `linux-kernel`. Está en <https://lore.kernel.org/dri-devel/>
+(buscar `fl2000`). b4: `change-id 20261105-fl2000-upstream-3fc2e1f00d24`,
+etiqueta `sent/20261105-fl2000-upstream-3fc2e1f00d24-v1` en
+`~/linux-drm-misc`; la rama `fl2000-upstream` ya está en la revisión 2.
+
+**Para la v2, no volver a ejecutar `make-upstream-series.sh` sobre la rama
+`fl2000-upstream`:** la recrea y se perdería el commit de seguimiento de b4
+(carta, destinatarios y `change-id`, que enlaza las versiones). Lo seguro es
+aplicar los cambios como commits nuevos o con `git rebase -i` dentro de esa
+rama, actualizar la carta con `EDITOR=nano b4 prep --edit-cover` (añadir
+"Changes in v2" al final) y enviar con `b4 send`, que pone `v2` solo.
+
+
 
 Rama `integration`, subida a GitHub. **Todo lo que entra en la serie está
 probado en el adaptador** (UGREEN HDMI+VGA, kernel 7.2.11, GNOME 51 en
