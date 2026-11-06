@@ -113,7 +113,7 @@ static bool fl2000_link_fits(enum usb_device_speed speed, const struct drm_displ
 	return rate * bytes_pix <= max_bw;
 }
 
-struct fl2000_drm_if {
+struct fl2000_device {
 	struct usb_device *usb_dev;
 	struct drm_device drm;
 	struct drm_plane plane;
@@ -131,9 +131,9 @@ struct fl2000_drm_if {
 	struct drm_bridge *bridge;
 };
 
-static inline struct fl2000_drm_if *to_fl2000_drm_if(struct drm_device *drm)
+static inline struct fl2000_device *to_fl2000_device(struct drm_device *drm)
 {
-	return container_of(drm, struct fl2000_drm_if, drm);
+	return container_of(drm, struct fl2000_device, drm);
 }
 
 DEFINE_DRM_GEM_FOPS(fl2000_drm_driver_fops);
@@ -164,7 +164,7 @@ static struct drm_driver fl2000_drm_driver = {
  */
 static int fl2000_atomic_check(struct drm_device *drm, struct drm_atomic_commit *state)
 {
-	struct drm_plane *plane = &to_fl2000_drm_if(drm)->plane;
+	struct drm_plane *plane = &to_fl2000_device(drm)->plane;
 	const struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
 	const struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
 
@@ -309,7 +309,7 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 		return status;
 
 	/* Whatever the framebuffer: the plane checks the format it has */
-	if (!fl2000_link_fits(to_fl2000_drm_if(crtc->dev)->usb_dev->speed, mode, 2))
+	if (!fl2000_link_fits(to_fl2000_device(crtc->dev)->usb_dev->speed, mode, 2))
 		return MODE_CLOCK_HIGH;
 
 	return MODE_OK;
@@ -355,7 +355,7 @@ static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_
 		return ret;
 
 	if (new_plane_state->visible &&
-	    !fl2000_link_fits(to_fl2000_drm_if(plane->dev)->usb_dev->speed,
+	    !fl2000_link_fits(to_fl2000_device(plane->dev)->usb_dev->speed,
 			      &new_crtc_state->adjusted_mode,
 			      fl2000_fb_bytes_pix(new_plane_state->fb)))
 		return -EINVAL;
@@ -372,7 +372,7 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	struct drm_plane_state *old_plane_state = drm_atomic_get_old_plane_state(state, plane);
 	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
+	struct fl2000_device *fdev = to_fl2000_device(plane->dev);
 	struct drm_framebuffer *fb = plane_state->fb;
 	struct drm_rect damage, src;
 	ktime_t start;
@@ -390,9 +390,9 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	if (drm_dev_enter(plane->dev, &idx)) {
 		start = ktime_get();
 		drm_rect_fp_to_int(&src, &plane_state->src);
-		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0],
+		fl2000_stream_compress(fdev->stream, &shadow_plane_state->data[0],
 				       drm_gem_is_imported(fb->obj[0]), fb->pitches[0], &src, &damage);
-		fl2000_stream_note_render(drm_if->stream,
+		fl2000_stream_note_render(fdev->stream,
 					  (unsigned int)ktime_us_delta(ktime_get(), start),
 					  drm_rect_width(&damage) * drm_rect_height(&damage));
 		drm_dev_exit(idx);
@@ -423,30 +423,30 @@ static const struct drm_plane_funcs fl2000_plane_funcs = {
  * accesses, by the EDID read or the IT66121 regmap at any moment, and it would not survive a reset
  * or a write to its control register in the middle.
  */
-static void fl2000_reset_locked(struct fl2000_drm_if *drm_if)
+static void fl2000_reset_locked(struct fl2000_device *fdev)
 {
-	i2c_lock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
-	fl2000_reset(drm_if->regmap);
-	i2c_unlock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+	i2c_lock_bus(fdev->adapter, I2C_LOCK_SEGMENT);
+	fl2000_reset(fdev->regmap);
+	i2c_unlock_bus(fdev->adapter, I2C_LOCK_SEGMENT);
 }
 
 /* Bring the chip to where it can be used, at bind time or when it may have lost power */
-static void fl2000_chip_setup(struct fl2000_drm_if *drm_if)
+static void fl2000_chip_setup(struct fl2000_device *fdev)
 {
-	i2c_lock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
-	fl2000_reset(drm_if->regmap);
-	fl2000_usb_magic(drm_if->regmap);
-	i2c_unlock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+	i2c_lock_bus(fdev->adapter, I2C_LOCK_SEGMENT);
+	fl2000_reset(fdev->regmap);
+	fl2000_usb_magic(fdev->regmap);
+	i2c_unlock_bus(fdev->adapter, I2C_LOCK_SEGMENT);
 
-	fl2000_enable_sink_interrupts(drm_if->regmap);
+	fl2000_enable_sink_interrupts(fdev->regmap);
 }
 
 /* Runs before the bridge is enabled: the IT66121 is programmed with the FL2000 clocking it */
 static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct drm_device *drm = crtc->dev;
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
-	struct regmap *regmap = drm_if->regmap;
+	struct fl2000_device *fdev = to_fl2000_device(drm);
+	struct regmap *regmap = fdev->regmap;
 	const struct drm_display_mode *mode = &crtc->state->mode;
 	const struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
 	struct fl2000_timings timings;
@@ -459,7 +459,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	if (WARN_ON(fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX_VGA) != MODE_OK))
 		return;
 	/* The CRTC needs a primary plane to be enabled, and this state is the one being applied */
-	bytes_pix = fl2000_fb_bytes_pix(drm_if->plane.state->fb);
+	bytes_pix = fl2000_fb_bytes_pix(fdev->plane.state->fb);
 
 	/* The registers go with the USB device */
 	if (!drm_dev_enter(drm, &idx))
@@ -482,7 +482,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	fl2000_set_pll(regmap, &pll);
 
 	/* Reset FL2000 and confirm PLL settings */
-	fl2000_reset_locked(drm_if);
+	fl2000_reset_locked(fdev);
 
 	/* Set timings settings */
 	fl2000_set_timings(regmap, &timings);
@@ -499,7 +499,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	fl2000_afe_magic(regmap);
 
 	/* Too late to fail the commit: without buffers the stream just does not start */
-	ret = fl2000_stream_mode_set(drm_if->stream, mode->hdisplay, mode->vdisplay, bytes_pix);
+	ret = fl2000_stream_mode_set(fdev->stream, mode->hdisplay, mode->vdisplay, bytes_pix);
 	if (ret)
 		drm_err(drm, "Cannot allocate the stream buffers (%d)\n", ret);
 
@@ -508,13 +508,13 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 
 static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 {
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
+	struct fl2000_device *fdev = to_fl2000_device(crtc->dev);
 	int idx;
 
 	if (drm_dev_enter(crtc->dev, &idx)) {
-		fl2000_stream_interrupts(drm_if->regmap, true);
+		fl2000_stream_interrupts(fdev->regmap, true);
 
-		fl2000_stream_enable(drm_if->stream);
+		fl2000_stream_enable(fdev->stream);
 
 		drm_dev_exit(idx);
 	}
@@ -522,13 +522,13 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 
 static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 {
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
+	struct fl2000_device *fdev = to_fl2000_device(crtc->dev);
 	int idx;
 
-	fl2000_stream_disable(drm_if->stream);
+	fl2000_stream_disable(fdev->stream);
 
 	if (drm_dev_enter(crtc->dev, &idx)) {
-		fl2000_stream_interrupts(drm_if->regmap, false);
+		fl2000_stream_interrupts(fdev->regmap, false);
 		drm_dev_exit(idx);
 	}
 }
@@ -573,7 +573,7 @@ static void fl2000_hdmi_encoder_force_connect(struct drm_encoder *encoder, bool 
 	int idx;
 
 	if (drm_dev_enter(encoder->dev, &idx)) {
-		fl2000_force_connect(to_fl2000_drm_if(encoder->dev)->regmap, force);
+		fl2000_force_connect(to_fl2000_device(encoder->dev)->regmap, force);
 		drm_dev_exit(idx);
 	}
 }
@@ -605,11 +605,11 @@ static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = 
  */
 void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 {
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
+	struct fl2000_device *fdev = to_fl2000_device(drm);
 	int idx;
 
 	if (events & FL2000_VGA_STATUS_HDMI_EVENT) {
-		int ret = it66121_ack_interrupts(drm_if->bridge);
+		int ret = it66121_ack_interrupts(fdev->bridge);
 
 		if (ret)
 			drm_dbg(drm, "Cannot acknowledge IT66121 interrupts (%d)\n", ret);
@@ -625,18 +625,18 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 
 /**
  * fl2000_drm_destroy() - stop the display and take the DRM device away from userspace
- * @drm_if: the DRM device
+ * @fdev: the DRM device
  *
  * Called when the USB interfaces are unbound. The DRM device itself is freed when the last
  * reference goes away: that of the interface, a devres, and those of any file userspace still has
  * open.
  */
-void fl2000_drm_destroy(struct fl2000_drm_if *drm_if)
+void fl2000_drm_destroy(struct fl2000_device *fdev)
 {
-	struct drm_device *drm = &drm_if->drm;
+	struct drm_device *drm = &fdev->drm;
 
 	/* No hotplug events for a node that is about to disappear */
-	fl2000_intr_quiesce(drm_if->intr);
+	fl2000_intr_quiesce(fdev->intr);
 	drm_kms_helper_poll_fini(drm);
 
 	/* Block userspace access and shut down the display pipeline */
@@ -644,14 +644,14 @@ void fl2000_drm_destroy(struct fl2000_drm_if *drm_if)
 	drm_atomic_helper_shutdown(drm);
 
 	/* Already stopped, unless it was left running by a shutdown that failed */
-	fl2000_stream_disable(drm_if->stream);
+	fl2000_stream_disable(fdev->stream);
 
-	fl2000_intr_destroy(drm_if->intr);
+	fl2000_intr_destroy(fdev->intr);
 }
 
 /**
  * fl2000_drm_suspend() - stop the display for system sleep or a USB reset
- * @drm_if: the DRM device
+ * @fdev: the DRM device
  *
  * Called once for the device, before any of its interfaces is suspended. The USB core goes on with
  * the sleep even if this fails, so the stream is stopped anyway, and fl2000_drm_resume() sets the
@@ -659,18 +659,18 @@ void fl2000_drm_destroy(struct fl2000_drm_if *drm_if)
  *
  * Return: 0 on success, a negative error code otherwise
  */
-int fl2000_drm_suspend(struct fl2000_drm_if *drm_if)
+int fl2000_drm_suspend(struct fl2000_device *fdev)
 {
 	int ret;
 
 	/* No hotplug events while going to sleep */
-	fl2000_intr_suspend(drm_if->intr);
+	fl2000_intr_suspend(fdev->intr);
 
 	/* Saves the state, turns the outputs off and stops the stream */
-	ret = drm_mode_config_helper_suspend(&drm_if->drm);
+	ret = drm_mode_config_helper_suspend(&fdev->drm);
 	if (ret) {
-		drm_err(&drm_if->drm, "Cannot save the display state (%d)\n", ret);
-		fl2000_stream_disable(drm_if->stream);
+		drm_err(&fdev->drm, "Cannot save the display state (%d)\n", ret);
+		fl2000_stream_disable(fdev->stream);
 	}
 
 	return ret;
@@ -678,37 +678,37 @@ int fl2000_drm_suspend(struct fl2000_drm_if *drm_if)
 
 /**
  * fl2000_drm_resume() - bring the display back after system sleep or a USB reset
- * @drm_if: the DRM device
+ * @fdev: the DRM device
  *
  * Called once for the device, when all of it is awake again, also after a reset-resume. The chips
  * may have lost power: they are set up as at bind time before the saved state is restored.
  *
  * Return: 0 on success, a negative error code otherwise
  */
-int fl2000_drm_resume(struct fl2000_drm_if *drm_if)
+int fl2000_drm_resume(struct fl2000_device *fdev)
 {
-	struct regmap *regmap = drm_if->regmap;
+	struct regmap *regmap = fdev->regmap;
 	int ret = 0;
 
 	/* First, as the IT66121 is reached through the FL2000 I2C engine */
 	fl2000_regmap_drop_cache(regmap);
 
-	it66121_resume(drm_if->bridge);
+	it66121_resume(fdev->bridge);
 
 	/* The same order as in fl2000_drm_create() */
-	fl2000_chip_setup(drm_if);
+	fl2000_chip_setup(fdev);
 
 	/* There is nothing to restore if saving the state failed */
-	if (drm_if->drm.mode_config.suspend_state) {
-		ret = drm_mode_config_helper_resume(&drm_if->drm);
+	if (fdev->drm.mode_config.suspend_state) {
+		ret = drm_mode_config_helper_resume(&fdev->drm);
 		if (ret)
-			drm_err(&drm_if->drm, "Cannot restore the display after sleep (%d)\n", ret);
+			drm_err(&fdev->drm, "Cannot restore the display after sleep (%d)\n", ret);
 	}
 
 	/* Without interrupts the connectors are still polled */
-	fl2000_intr_start(drm_if->intr);
+	fl2000_intr_start(fdev->intr);
 
-	drm_kms_helper_hotplug_event(&drm_if->drm);
+	drm_kms_helper_hotplug_event(&fdev->drm);
 
 	return ret;
 }
@@ -727,12 +727,12 @@ static void fl2000_stream_release(struct drm_device *drm, void *res)
  *
  * Return: the DRM device, or an ERR_PTR() on failure
  */
-struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
+struct fl2000_device *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
 					struct i2c_adapter *adapter, struct drm_bridge *bridge)
 {
 	int ret = 0;
 	struct usb_device *usb_dev = interface_to_usbdev(interface);
-	struct fl2000_drm_if *drm_if;
+	struct fl2000_device *fdev;
 	struct drm_device *drm;
 	struct device *dma_dev;
 	struct drm_mode_config *mode_config;
@@ -741,16 +741,16 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 
 	dev_dbg(&interface->dev, "Creating the FL2000 DRM device\n");
 
-	drm_if = devm_drm_dev_alloc(&interface->dev, &fl2000_drm_driver, struct fl2000_drm_if, drm);
-	if (IS_ERR(drm_if)) {
-		dev_err(&interface->dev, "Cannot allocate DRM structure (%pe)\n", drm_if);
-		return drm_if;
+	fdev = devm_drm_dev_alloc(&interface->dev, &fl2000_drm_driver, struct fl2000_device, drm);
+	if (IS_ERR(fdev)) {
+		dev_err(&interface->dev, "Cannot allocate DRM structure (%pe)\n", fdev);
+		return fdev;
 	}
-	drm = &drm_if->drm;
-	drm_if->usb_dev = usb_dev;
-	drm_if->regmap = regmap;
-	drm_if->adapter = adapter;
-	drm_if->bridge = bridge;
+	drm = &fdev->drm;
+	fdev->usb_dev = usb_dev;
+	fdev->regmap = regmap;
+	fdev->adapter = adapter;
+	fdev->bridge = bridge;
 
 	/* A USB device cannot DMA by itself: dma-buf imports go through its host controller */
 	dma_dev = usb_intf_get_dma_device(interface);
@@ -772,60 +772,60 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	mode_config->max_width = FL2000_MAX_WIDTH;
 	mode_config->max_height = FL2000_MAX_HEIGHT;
 
-	ret = drm_universal_plane_init(drm, &drm_if->plane, 0, &fl2000_plane_funcs,
+	ret = drm_universal_plane_init(drm, &fdev->plane, 0, &fl2000_plane_funcs,
 				       fl2000_pixel_formats, ARRAY_SIZE(fl2000_pixel_formats),
 				       fl2000_plane_format_modifiers, DRM_PLANE_TYPE_PRIMARY, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize plane (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
-	drm_plane_helper_add(&drm_if->plane, &fl2000_plane_helper_funcs);
+	drm_plane_helper_add(&fdev->plane, &fl2000_plane_helper_funcs);
 
 	/*
 	 * Enable the damage-clips property the update path relies on
 	 * (drm_atomic_helper_damage_merged()).
 	 */
-	drm_plane_enable_fb_damage_clips(&drm_if->plane);
+	drm_plane_enable_fb_damage_clips(&fdev->plane);
 
-	ret = drmm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, NULL,
+	ret = drmm_crtc_init_with_planes(drm, &fdev->crtc, &fdev->plane, NULL,
 					 &fl2000_crtc_funcs, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize CRTC (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
-	drm_crtc_helper_add(&drm_if->crtc, &fl2000_crtc_helper_funcs);
-	drm_if->plane.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
+	drm_crtc_helper_add(&fdev->crtc, &fl2000_crtc_helper_funcs);
+	fdev->plane.possible_crtcs = drm_crtc_mask(&fdev->crtc);
 
 	/* The FL2000 is programmed from the CRTC; the IT66121 bridge hangs off this encoder */
-	ret = drmm_encoder_init(drm, &drm_if->encoder, NULL, DRM_MODE_ENCODER_NONE, NULL);
+	ret = drmm_encoder_init(drm, &fdev->encoder, NULL, DRM_MODE_ENCODER_NONE, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize encoder (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
-	drm_if->encoder.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
-	drm_encoder_helper_add(&drm_if->encoder, &fl2000_hdmi_encoder_helper_funcs);
+	fdev->encoder.possible_crtcs = drm_crtc_mask(&fdev->crtc);
+	drm_encoder_helper_add(&fdev->encoder, &fl2000_hdmi_encoder_helper_funcs);
 
 	/* Start streaming interface */
-	drm_if->stream = fl2000_stream_create(usb_dev);
-	if (IS_ERR(drm_if->stream)) {
-		ret = PTR_ERR(drm_if->stream);
+	fdev->stream = fl2000_stream_create(usb_dev);
+	if (IS_ERR(fdev->stream)) {
+		ret = PTR_ERR(fdev->stream);
 		drm_err(drm, "Cannot create stream (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
 
-	ret = drmm_add_action_or_reset(drm, fl2000_stream_release, drm_if->stream);
+	ret = drmm_add_action_or_reset(drm, fl2000_stream_release, fdev->stream);
 	if (ret)
 		return ERR_PTR(ret);
 
-	drm_if->intr = fl2000_intr_create(usb_dev, regmap, drm);
-	if (IS_ERR(drm_if->intr)) {
-		ret = PTR_ERR(drm_if->intr);
+	fdev->intr = fl2000_intr_create(usb_dev, regmap, drm);
+	if (IS_ERR(fdev->intr)) {
+		ret = PTR_ERR(fdev->intr);
 		drm_err(drm, "Cannot set up interrupts (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
 
 	/* The display driver makes the connector, from what the bridge reports */
-	ret = drm_bridge_attach(&drm_if->encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+	ret = drm_bridge_attach(&fdev->encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 	if (ret) {
 		drm_err(drm, "Cannot attach bridge (%d)\n", ret);
 		goto err_destroy_intr;
@@ -835,7 +835,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	 * The HDMI connector is the generic one of the bridge chain: the IT66121 attached without
 	 * a connector of its own and reports the hot plug line and the EDID.
 	 */
-	connector = drm_bridge_connector_init(drm, &drm_if->encoder);
+	connector = drm_bridge_connector_init(drm, &fdev->encoder);
 	if (IS_ERR(connector)) {
 		ret = PTR_ERR(connector);
 		drm_err(drm, "Cannot initialize HDMI connector (%d)\n", ret);
@@ -843,8 +843,8 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	}
 
 	/* The VGA output looks at the bridge the HDMI encoder has by now */
-	ret = fl2000_vga_init(drm, &drm_if->vga, &drm_if->crtc, &drm_if->encoder, adapter,
-			      drm_if->intr);
+	ret = fl2000_vga_init(drm, &fdev->vga, &fdev->crtc, &fdev->encoder, adapter,
+			      fdev->intr);
 	if (ret) {
 		drm_err(drm, "Cannot initialize VGA output (%d)\n", ret);
 		goto err_destroy_intr;
@@ -852,7 +852,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 
 	drm_mode_config_reset(drm);
 
-	fl2000_chip_setup(drm_if);
+	fl2000_chip_setup(fdev);
 
 	/*
 	 * Probe the connector before userspace can see the device. A compositor
@@ -876,7 +876,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	}
 
 	/* Without interrupts the connectors are still polled */
-	fl2000_intr_start(drm_if->intr);
+	fl2000_intr_start(fdev->intr);
 
 	/* Polls both connectors: events can be missed, and HDMI has no hot plug of its own */
 	drm_kms_helper_poll_init(drm);
@@ -887,10 +887,10 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	 */
 	drm_client_setup(drm, NULL);
 
-	return drm_if;
+	return fdev;
 
 err_destroy_intr:
-	fl2000_intr_destroy(drm_if->intr);
+	fl2000_intr_destroy(fdev->intr);
 
 	return ERR_PTR(ret);
 }

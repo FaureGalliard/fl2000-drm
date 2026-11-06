@@ -148,12 +148,12 @@ int fl2000_read_status(struct regmap *regmap, u32 *status);
 int fl2000_i2c_dword(struct regmap *regmap, bool read, u16 addr, u8 offset, u32 *data);
 
 /* DRM device creation */
-struct fl2000_drm_if;
-struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
+struct fl2000_device;
+struct fl2000_device *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
 					struct i2c_adapter *adapter, struct drm_bridge *bridge);
-void fl2000_drm_destroy(struct fl2000_drm_if *drm_if);
+void fl2000_drm_destroy(struct fl2000_device *fdev);
 void fl2000_drm_hotplug(struct drm_device *drm, u32 events);
-int fl2000_drm_suspend(struct fl2000_drm_if *drm_if);
-int fl2000_drm_resume(struct fl2000_drm_if *drm_if);
+int fl2000_drm_suspend(struct fl2000_device *fdev);
+int fl2000_drm_resume(struct fl2000_device *fdev);
 
 #endif /* FL2000_H */
