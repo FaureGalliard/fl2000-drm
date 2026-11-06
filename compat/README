@@ -12,3 +12,23 @@ the upstream patches.
 
 When a new kernel renames something the driver uses, update the driver to the
 new name and add a rule here for the old one.
+
+DRM helpers missing from the target kernel
+------------------------------------------
+
+The HDMI connector is drm_bridge_connector, which the Kconfig selects
+(DRM_BRIDGE_CONNECTOR, with the HDMI state, audio and CEC helpers it calls).
+Kernels for PCs are usually built without it, as only SoC drivers select it.
+The top-level Makefile looks the helpers' symbols up in the target's
+Module.symvers and compiles the missing ones into fl2000.ko, unchanged, from
+
+  drm-helpers/<major.minor>/   drivers/gpu/drm/display/*.c of that kernel
+                               series, with SHA256SUMS and SOURCE
+
+For a series that has no directory yet, the Makefile runs
+fetch-drm-helpers.sh, which downloads the files of the target's own release
+from the stable tree (GitHub mirror). Commit the new directory: builds for that
+series then work offline, and the Makefile checks the files against
+SHA256SUMS. The helpers are not translated by the sed rules, since they come
+from the target kernel itself. Idea taken from klogg/fl2000_drm, which builds
+the same files for its distribution packages.

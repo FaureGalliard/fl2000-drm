@@ -1,0 +1,5 @@
+Unmodified copies of drivers/gpu/drm/display/*.c from Linux v7.2.11,
+fetched from https://raw.githubusercontent.com/gregkh/linux/v7.2.11/drivers/gpu/drm/display
+by compat/fetch-drm-helpers.sh for kernel release 7.2.11-arch1-1.
+Compiled into fl2000.ko only for kernels built without them; never part of the
+upstream patches.
