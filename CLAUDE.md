@@ -276,10 +276,10 @@ that). Leave the dongle unplugged ~10 s first and verify with
    `sudo FL2000_TEST_MODE='1366x768 #14 1360x768 848x480 800x600 1024x768' bash scripts/fl2000-field-test.sh`
    (the `setting mode` line shows which mode each `#N` picked; `sent/s` must
    equal each mode's refresh rate), then GNOME at 1366x768 (`conv` ~8 ms per
-   full frame). **1360x768 (mostly garbled) is a separate problem**: its frame
-   is a whole number of packets and the device ran at one frame per refresh.
-   Suspect the monitor's mode detection first; 848x480 tells a chip limit from
-   the monitor. Details and rejected theories: `docs/DEVELOPMENT.md`, "VGA
+   full frame). 1360x768 looked garbled only in GNOME: its colour bars from a
+   TTY were fine, so it was most likely the same split-VRAM vmap; recheck it
+   in GNOME. 848x480 gave "no signal" while the device took its frames
+   normally, so that one points at the monitor. Details and rejected theories: `docs/DEVELOPMENT.md`, "VGA
    output".
 8. **Upstream review items still open** (done: simple pipe removed, shadow
    plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable,
