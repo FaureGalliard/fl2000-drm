@@ -143,7 +143,7 @@ int fl2000_set_pll(struct regmap *regmap, struct fl2000_pll *pll);
 int fl2000_force_connect(struct regmap *regmap, bool force);
 bool fl2000_force_connect_active(struct regmap *regmap);
 int fl2000_enable_sink_interrupts(struct regmap *regmap);
-int fl2000_enable_interrupts(struct regmap *regmap);
+int fl2000_stream_interrupts(struct regmap *regmap, bool enable);
 int fl2000_read_status(struct regmap *regmap, u32 *status);
 int fl2000_i2c_dword(struct regmap *regmap, bool read, u16 addr, u8 offset, u32 *data);
 

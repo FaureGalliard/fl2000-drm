@@ -213,16 +213,15 @@ int fl2000_enable_sink_interrupts(struct regmap *regmap)
 	return 0;
 }
 
-/* All of them, for while a frame is being sent */
-int fl2000_enable_interrupts(struct regmap *regmap)
+/* The interrupts about the frames being sent */
+int fl2000_stream_interrupts(struct regmap *regmap, bool enable)
 {
 	u32 mask, val;
 
 	val = FL2000_VGA_CTRL_ACLK_VGA_ERR_INT_EN | FL2000_VGA_CTRL_ACLK_LBUF_ERR_INT_EN;
 	mask = val | FL2000_VGA_CTRL_ACLK_FEEDBACK_INT_EN;
-	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, mask, val);
 
-	return fl2000_enable_sink_interrupts(regmap);
+	return regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, mask, enable ? val : 0);
 }
 
 /*

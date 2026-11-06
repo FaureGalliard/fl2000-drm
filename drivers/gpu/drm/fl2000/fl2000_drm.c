@@ -433,18 +433,6 @@ static const struct drm_plane_funcs fl2000_plane_funcs = {
  */
 
 /*
- * HDMI has always run with the monitor sense forced, so it stays so whenever HDMI is driven.
- * Driving VGA alone leaves it to the chip, which then powers the DAC by itself and notices the
- * cable being unplugged.
- */
-static void fl2000_crtc_force_connect(struct fl2000_drm_if *drm_if,
-				      const struct drm_crtc_state *crtc_state)
-{
-	fl2000_force_connect(drm_if->regmap,
-			     crtc_state->encoder_mask & drm_encoder_mask(&drm_if->encoder));
-}
-
-/*
  * Reset the FL2000 with its I2C engine idle. An operation of the engine is a sequence of register
  * accesses, by the EDID read or the IT66121 regmap at any moment, and it would not survive a reset
  * or a write to its control register in the middle.
@@ -507,8 +495,6 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	/* Set PLL settings */
 	fl2000_set_pll(regmap, &pll);
 
-	fl2000_crtc_force_connect(drm_if, crtc->state);
-
 	/* Reset FL2000 and confirm PLL settings */
 	fl2000_reset_locked(drm_if);
 
@@ -521,8 +507,8 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	/* Configure frame transfers */
 	fl2000_set_transfers(regmap);
 
-	/* Enable interrupts */
-	fl2000_enable_interrupts(regmap);
+	/* The reset may have cleared them, and monitors are to be heard of at all times */
+	fl2000_enable_sink_interrupts(regmap);
 
 	fl2000_afe_magic(regmap);
 
@@ -540,8 +526,7 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 	int idx;
 
 	if (drm_dev_enter(crtc->dev, &idx)) {
-		/* mode_set_nofb does not run when only the connector changed; disable cleared it */
-		fl2000_crtc_force_connect(drm_if, drm_atomic_get_new_crtc_state(state, crtc));
+		fl2000_stream_interrupts(drm_if->regmap, true);
 
 		fl2000_stream_enable(drm_if->stream);
 
@@ -556,9 +541,8 @@ static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_
 
 	fl2000_stream_disable(drm_if->stream);
 
-	/* Nothing is shown any more: let the chip's own sense report the monitors again */
 	if (drm_dev_enter(crtc->dev, &idx)) {
-		fl2000_force_connect(drm_if->regmap, false);
+		fl2000_stream_interrupts(drm_if->regmap, false);
 		drm_dev_exit(idx);
 	}
 }
@@ -593,8 +577,37 @@ static enum drm_mode_status fl2000_hdmi_encoder_mode_valid(struct drm_encoder *e
 	return fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX);
 }
 
+/*
+ * HDMI has always run with the monitor sense forced, so it stays so whenever HDMI is driven.
+ * Driving VGA alone leaves it to the chip, which then powers the DAC by itself and notices the
+ * cable being unplugged.
+ */
+static void fl2000_hdmi_encoder_force_connect(struct drm_encoder *encoder, bool force)
+{
+	int idx;
+
+	if (drm_dev_enter(encoder->dev, &idx)) {
+		fl2000_force_connect(to_fl2000_drm_if(encoder->dev)->regmap, force);
+		drm_dev_exit(idx);
+	}
+}
+
+static void fl2000_hdmi_encoder_atomic_enable(struct drm_encoder *encoder,
+					      struct drm_atomic_commit *state)
+{
+	fl2000_hdmi_encoder_force_connect(encoder, true);
+}
+
+static void fl2000_hdmi_encoder_atomic_disable(struct drm_encoder *encoder,
+					       struct drm_atomic_commit *state)
+{
+	fl2000_hdmi_encoder_force_connect(encoder, false);
+}
+
 static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = {
 	.mode_valid = fl2000_hdmi_encoder_mode_valid,
+	.atomic_enable = fl2000_hdmi_encoder_atomic_enable,
+	.atomic_disable = fl2000_hdmi_encoder_atomic_disable,
 };
 
 /**
