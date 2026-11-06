@@ -192,7 +192,7 @@ what the hardware test has to look at:
   only probed on hotplug events and by userspace. No `DRM_BRIDGE_OP_HPD`: the
   IT66121 interrupt reaches the host through the FL2000 interrupt endpoint,
   which still sends a device-wide hotplug event (`fl2000_drm_hotplug()`).
-- **The EDID cache stays in the bridge**: `.edid_read` hands out a copy and
+- (No longer so since the review of 6 Nov, kept for the history.) **The EDID cache stays in the bridge**: `.edid_read` hands out a copy and
   reads again only when `.detect` saw HPD low, so the one-read-per-connection
   fix for the desktop stall is kept. The connector calls `.detect` before every
   EDID request.
@@ -282,7 +282,7 @@ off. What it found, and what stands now:
   HDMI while driving it reported an empty VGA connector as connected until the
   mode set on it cleared the force. The earlier tests hid it, plugging VGA right
   after.
-- **The cursor is blended as premultiplied.** The formula was for straight alpha,
+- (The cursor plane went with the review of Thomas Zimmermann.) **The cursor is blended as premultiplied.** The formula was for straight alpha,
   and compositors hand over premultiplied sprites: antialiased edges came out too
   dark. Not found by the review; it asked for the blend mode property, which the
   core now warns about (`pixel format with alpha exposed but blend mode not
@@ -325,6 +325,29 @@ What was checked and rejected or left alone:
   to be restored at all.
 - *The in-tree `ite-it66121`*: left to the maintainers' answer to question 1 of the
   cover letter (`docs/pending/it66121-in-tree.md`).
+
+## Review of the RFC by Thomas Zimmermann (6 November 2026)
+
+First human review, of patch 4/4 of v1, and all of it was done, on `fix/zimmermann-v1`.
+What it undid, and why that was there, as it may come back as a question:
+
+- **Cursor plane.** It existed because Mutter leaves the pointer on the hardware cursor
+  of the primary GPU, where it never reaches this output. His answer: fix the compositor.
+- **Vblank timer.** For virtual displays for now. Without vblank the atomic helpers
+  complete the events at once, and only USB flow control paces the link.
+- **EDID cache.** It avoided a stall of about a second per probe with the mode config
+  locked. His answer: the helpers manage this.
+- **10-bit formats.** See the bug history: without them Mutter 51 goes down a copy path
+  that leaks (issue #5101) and the desktop stalled after ~30 min. They are not native,
+  so they do not belong by his rule. **To be measured**: docs/pending/pruebas-v2.md.
+- **Automatic RGB565.** The stream used to choose it when RGB888 did not fit. Now the
+  framebuffer says, and with XRGB8888 such a mode fails in the plane check.
+
+What did not change, and goes back to him as an explanation: the chips are set up before
+`drm_mode_config_helper_resume()` (he was not sure about the order), as restoring the
+state writes to them and needs the register caches dropped first; only the interrupts
+moved after it. The HDMI encoder keeps `mode_valid` next to the CRTC's `mode_fixup`,
+as it filters the modes that are offered.
 
 ## Decoding the driver's DDC messages
 

@@ -1,5 +1,35 @@
 # Pruebas en el adaptador de los arreglos para la v2
 
+## Primero: lo que cambió por la revisión de Thomas Zimmermann
+
+Rama `fix/zimmermann-v1`. Instalar como abajo, guardando antes el módulo que funcionaba
+(`sudo cp /lib/modules/$(uname -r)/extra/fl2000.ko ~/fl2000-sashiko.ko`). Por orden de
+riesgo:
+
+1. **Fuga de memoria en GNOME (lo más importante).** Esto ya pasó: sin los formatos de
+   10 bits, Mutter rechaza el zero-copy (`Zero-copy disabled ... format=AR30`) y usa una
+   ruta de copia que pierde un dma-buf por frame (Mutter issue #5101), hasta congelar el
+   escritorio a los ~30 min con `amdgpu_dm_plane_helper_prepare_fb ... bind failed`.
+   Es probable que vuelva. Con GNOME abierto, dejándolo al menos 40 minutos:
+   `watch -n5 'cat /sys/class/drm/card*/device/mem_info_gtt_used'`. Debe quedarse
+   plano (~90 MB). Si sube sin parar, anotar cuánto por minuto y cerrar sesión antes de
+   que se congele. **Thomas tiene que saberlo antes de la v2:** el fallo es de Mutter,
+   pero sería una regresión visible con GNOME.
+2. **Imagen con HDMI.** Forzar el monitor ahora va en el encoder, después de arrancar el
+   stream y sin estar activo durante el reset del chip (commit `bb45d3d`). Si HDMI
+   queda negro y VGA funciona, es esto: apuntarlo.
+3. **El puntero en GNOME.** Sin plano de cursor puede que no aparezca en esta salida.
+   Thomas ya lo sabe y dice que se arregla en el compositor; solo hay que anotar qué
+   pasa.
+4. **Consumo sin vblank.** `top` con el escritorio quieto y arrastrando una ventana:
+   comparar con antes. En el log, `rendered/s` no debería dispararse.
+5. **Tirón al conectar.** El EDID se lee en cada sondeo: puede volver el pequeño parón
+   del escritorio al conectar un monitor.
+
+Luego repetir lo de abajo.
+
+## Lo demás
+
 Rama `fix/sashiko-v1`. En la VM todo pasa (`docs/vm-test-v2.log`), pero la VM no
 sabe nada del chip real. Esto es lo que solo se ve con el adaptador. Cada punto dice
 qué cambió, qué debería verse y qué mirar si no.
