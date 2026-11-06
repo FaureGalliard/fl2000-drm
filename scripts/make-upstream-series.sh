@@ -57,6 +57,13 @@ if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
 	exit 1
 fi
 
+# Run from the base branch: from the series branch the new series would stack
+# on top of the old one
+if [ "$(git branch --show-current)" = "$BRANCH" ]; then
+	echo "$LINUX is on $BRANCH: check out the base first (git checkout drm-misc-next)" >&2
+	exit 1
+fi
+
 BASE="$(git rev-parse HEAD)"
 git checkout -q -B "$BRANCH" "$BASE"
 
@@ -142,8 +149,8 @@ stage 4 Kconfig Makefile fl2000.h fl2000_drv.c fl2000_drm.c fl2000_interrupt.c f
 commit_stage 4
 
 # The end of the series must be exactly the driver in this repository
-diff -r "$REPO/$DRV" "$DRV" -x '*.o' -x '*.ko' -x '*.mod*' -x '.*' -x modules.order \
-	-x Module.symvers >/dev/null ||
+diff -r "$REPO/$DRV" "$DRV" -x '*.o' -x '*.a' -x '*.ko' -x '*.mod*' -x '.*' \
+	-x modules.order -x Module.symvers >/dev/null ||
 	{ echo "series does not end with the repository's driver" >&2; exit 1; }
 
 # --- series ---------------------------------------------------------------
