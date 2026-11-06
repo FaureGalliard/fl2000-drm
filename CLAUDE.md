@@ -171,6 +171,12 @@ that). Leave the dongle unplugged ~10 s first and verify with
   in ~8 ms. Refusing imports instead pushes mutter onto a CPU copy path that
   leaked ~1.7 GB/min of GTT until the whole desktop stalled. On cached RAM a
   plain memcpy is faster, so `fl2000_read_span()` chooses per source.
+- **Import framebuffers with a mapping (`drm_gem_prime_import`), not the
+  shmem no-map import.** Unmapped, amdgpu keeps the buffer in VRAM and vmaps
+  it as one linear range, right only for its last VRAM block: GNOME at
+  1360/1366x768 showed just the bottom ~10 %. Mapping makes amdgpu pin it in
+  system memory. `scripts/fl2000-dump-fb.c` saves the buffer the compositor
+  hands us, to tell compositor bugs from ours.
 - **The word swap of the frame follows the offset in the FRAME, never in the
   line.** The FL2000 wants the 32-bit halves of every 64-bit word of the flat
   frame swapped; a line only starts on a word boundary when its length is a
@@ -250,7 +256,7 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`); GNOME at 59.79 Hz still shows only the bottom ~10 %, see DEVELOPMENT.md.**
+7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 not yet verified on hardware.**
    The frames had no end (see the zero-length URB invariant; commit 627c569),
    and the conversion at that width fell off the streaming-load path (78 ms
    per frame; commit b22b48e). To verify, from a real TTY:
