@@ -50,9 +50,10 @@ En otra terminal: `udevadm monitor -k -s drm`.
   línea de interrupción del IT66121 llega al FL2000 (no lo sabemos, nunca se había
   activado), debería notarse al instante. Si sigue tardando 10 s no pasa nada grave:
   anotarlo, porque responde a la pregunta 2 de la carta.
-- **Lo importante: unos pocos eventos por cada conexión, no una lluvia continua.** Si
-  no paran, es el reconocimiento de la interrupción (commits `2c2eed1`, `0a70cca`,
-  `9764d18`).
+- **Lo importante: unos pocos eventos por cada conexión, no una lluvia continua.** No
+  debería pasar: antes tampoco se limpiaban los errores DDC y no hubo lluvia, así que
+  la línea parece actuar por flanco o no llegar. Si no paran, es el reconocimiento de
+  la interrupción (commits `2c2eed1`, `0a70cca`, `9764d18`).
 - **Sin monitor VGA conectado, al quitar HDMI no debe aparecer un monitor VGA fantasma**
   en Configuración de GNOME (commit `97e7934`).
 - Volver a conectar: el monitor vuelve solo.
@@ -62,7 +63,7 @@ En otra terminal: `udevadm monitor -k -s drm`.
 - Con el cable VGA y nada en HDMI, el conector sale `connected` y GNOME va a 1366x768.
 - Desconectar y volver a conectar el cable VGA.
 - Pasar de HDMI a VGA y de vuelta sin cerrar sesión: tras quitar HDMI, VGA aparece
-  cuando GNOME apaga el CRTC.
+  cuando GNOME apaga el CRTC, a lo sumo 10 s después (el sondeo de conectores).
 
 ## 5. Suspender
 

@@ -300,7 +300,8 @@ legacy and atomic page flips at the refresh rate, hot plug, unplug while streami
 with the file open, replug, `rmmod` and then unplug, loading with the adapter
 present, sysfs unbind and bind of any interface, rebinding with the old device held
 open, a USB reset while streaming, unplugging in the middle of the probe, storms of
-commits during unbind, allocation failures all over the mode set, and no leaks. The
+commits during unbind, monitor events during flips and probes, two adapters at once,
+allocation failures all over the mode set, and no leaks. The
 same tests against the v1 driver crash it: `rmmod` then unplug, the huge mode, and a
 zero-length I2C message. None of this says anything about the real chip: the timings,
 the DAC, the IT66121 itself, the amdgpu import or GNOME. Those need the adapter.
