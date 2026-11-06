@@ -15,6 +15,7 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/highmem.h>
 #include <linux/iosys-map.h>
 #include <linux/scatterlist.h>
 #include <linux/vmalloc.h>
@@ -43,7 +44,10 @@
 /* Must cover FL2000_MAX_WIDTH from fl2000_drm.c */
 #define FL2000_MAX_LINE_PIXELS 4096
 
+struct fl2000_stream;
+
 struct fl2000_stream_buf {
+	struct fl2000_stream *stream;
 	struct list_head list;
 	/*
 	 * Generation of the desktop content and of the cursor this buffer was
@@ -184,7 +188,7 @@ static void fl2000_free_sb(struct fl2000_stream_buf *sb)
 	kfree(sb);
 }
 
-static struct fl2000_stream_buf *fl2000_alloc_sb(unsigned int size)
+static struct fl2000_stream_buf *fl2000_alloc_sb(struct fl2000_stream *stream, unsigned int size)
 {
 	int ret;
 	struct fl2000_stream_buf *sb;
@@ -193,6 +197,8 @@ static struct fl2000_stream_buf *fl2000_alloc_sb(unsigned int size)
 	sb = kzalloc_obj(*sb);
 	if (!sb)
 		return NULL;
+
+	sb->stream = stream;
 
 	sb->pages = kzalloc_objs(*sb->pages, nr_pages);
 	if (!sb->pages)
@@ -248,7 +254,7 @@ static int fl2000_stream_get_buffers(struct fl2000_stream *stream, unsigned int 
 		return -EBUSY;
 
 	for (int i = 0; i < FL2000_SB_NUM; i++) {
-		cur_sb = fl2000_alloc_sb(size);
+		cur_sb = fl2000_alloc_sb(stream, size);
 		if (!cur_sb) {
 			ret = -ENOMEM;
 			goto error;
@@ -279,24 +285,21 @@ static void fl2000_stream_release(struct device *dev, void *res)
 
 static void fl2000_stream_data_completion(struct urb *urb)
 {
-	struct fl2000_stream_buf *cur_sb = urb->transfer_buffer;
-	struct usb_device *usb_dev = urb->dev;
-	struct fl2000_stream *stream = urb->context;
+	struct fl2000_stream_buf *cur_sb = urb->context;
+	struct fl2000_stream *stream = cur_sb->stream;
 	unsigned long flags;
 
-	if (stream) {
-		spin_lock_irqsave(&stream->list_lock, flags);
-		list_move_tail(&cur_sb->list, &stream->render_list);
-		spin_unlock_irqrestore(&stream->list_lock, flags);
+	spin_lock_irqsave(&stream->list_lock, flags);
+	list_move_tail(&cur_sb->list, &stream->render_list);
+	spin_unlock_irqrestore(&stream->list_lock, flags);
 
-		atomic_inc(&stream->frames);
+	atomic_inc(&stream->frames);
 
-		/* Return the credit and kick the transmit work */
-		atomic_inc(&stream->credits);
-		wake_up(&stream->credits_wq);
+	/* Return the credit and kick the transmit work */
+	atomic_inc(&stream->credits);
+	wake_up(&stream->credits_wq);
 
-		fl2000_urb_status(usb_dev, urb->status);
-	}
+	fl2000_urb_status(urb->dev, urb->status);
 
 	usb_free_urb(urb);
 }
@@ -613,11 +616,14 @@ static void fl2000_stream_work(struct work_struct *work)
 		}
 
 		/*
-		 * Endpoint 1 bulk out. We store pointer to current stream buffer structure in
-		 * transfer_buffer field of URB which is unused due to SGT.
+		 * The frame was written through the vmap of the pages the URB sends: where
+		 * caches can alias, DMA mapping the pages does not see those writes.
 		 */
-		usb_fill_bulk_urb(data_urb, usb_dev, usb_sndbulkpipe(usb_dev, 1), cur_sb,
-				  (int)stream->buf_size, fl2000_stream_data_completion, stream);
+		flush_kernel_vmap_range(cur_sb->vaddr, stream->buf_size);
+
+		/* Endpoint 1 bulk out, the data is in the scatterlist */
+		usb_fill_bulk_urb(data_urb, usb_dev, usb_sndbulkpipe(usb_dev, 1), NULL,
+				  (int)stream->buf_size, fl2000_stream_data_completion, cur_sb);
 		data_urb->interval = 0;
 		data_urb->sg = cur_sb->sgt.sgl;
 		data_urb->num_sgs = cur_sb->sgt.nents;
@@ -634,7 +640,7 @@ static void fl2000_stream_work(struct work_struct *work)
 		 * drains data at one pixel per clock, blanking included.
 		 */
 		usb_fill_bulk_urb(eof_urb, usb_dev, usb_sndbulkpipe(usb_dev, 1), NULL, 0,
-				  fl2000_stream_eof_completion, stream);
+				  fl2000_stream_eof_completion, NULL);
 
 		ret = fl2000_stream_submit(stream, data_urb);
 		if (ret)
