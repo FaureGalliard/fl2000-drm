@@ -25,6 +25,10 @@
 
 #define IRQ_POLL_INTRVL 100
 
+/* How often, and how far apart, to look for the chip on the bus */
+#define IT66121_DETECT_TRIES	5
+#define IT66121_DETECT_DELAY_MS	50
+
 struct it66121_priv {
 	struct i2c_adapter *adapter;
 	struct i2c_client *client;
@@ -871,6 +875,10 @@ static int it66121_regs_init(struct it66121_priv *priv, struct i2c_client *clien
 	return 0;
 }
 
+/*
+ * The callback of i2c_new_scanned_device(): nonzero if the device is there. It reads the IDs with
+ * the same transfers as the regmap, which is all this adapter can do (see its quirks).
+ */
 static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address)
 {
 	int ret;
@@ -882,13 +890,6 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 	dev_dbg(&adapter->dev, "Detecting IT66121 at address 0x%X on %s\n", address,
 		adapter->name);
 
-	/* We rely on full I2C protocol + 1 byte SMBUS read for detection */
-	ret = i2c_check_functionality(adapter, I2C_FUNC_I2C | I2C_FUNC_SMBUS_READ_BYTE);
-	if (!ret) {
-		dev_dbg(&adapter->dev, "Adapter does not support I2C functions properly\n");
-		return -ENODEV;
-	}
-
 	for (int i = 0; i < ARRAY_SIZE(id_regs); i++) {
 		struct i2c_msg msgs[] = {
 			{ .addr = address, .flags = 0, .len = 1, .buf = &id_regs[i] },
@@ -896,23 +897,24 @@ static int it66121_i2c_probe(struct i2c_adapter *adapter, unsigned short address
 		};
 
 		ret = i2c_transfer(adapter, msgs, ARRAY_SIZE(msgs));
-		if (ret < 0) {
-			dev_err(&adapter->dev, "I2C transfer failed (%d)\n", ret);
-			return -ENODEV;
+		if (ret != ARRAY_SIZE(msgs)) {
+			dev_dbg(&adapter->dev, "No answer at address 0x%X (%d)\n", address, ret);
+			return 0;
 		}
 	}
 
 	vendor = get_unaligned_le16(&id[0]);
 	device = get_unaligned_le16(&id[2]);
 	if (vendor != VENDOR_ID || (device & ~REVISION_MASK) != DEVICE_ID) {
-		dev_dbg(&adapter->dev, "IT66121 not found (0x%X-0x%X)\n", vendor, device);
-		return -ENODEV;
+		dev_warn(&adapter->dev, "Not an IT66121 at address 0x%X (0x%04X-0x%04X)\n", address,
+			 vendor, device);
+		return 0;
 	}
 
 	dev_dbg(&adapter->dev, "IT66121 found, revision %d\n",
 		(device & REVISION_MASK) >> REVISION_SHIFT);
 
-	return 0;
+	return 1;
 }
 
 static struct i2c_client *it66121_i2c_init(struct i2c_adapter *adapter)
@@ -925,8 +927,20 @@ static struct i2c_client *it66121_i2c_init(struct i2c_adapter *adapter)
 
 	/* According to datasheet IT66121 addresses are 0x98 or 0x9A including cmd */
 	const unsigned short it66121_addr[] = { (0x98 >> 1), (0x9A >> 1), I2C_CLIENT_END };
+	struct i2c_client *client;
 
-	return i2c_new_scanned_device(adapter, &board_info, it66121_addr, it66121_i2c_probe);
+	/* The chip may still be waking up when the USB device has just enumerated */
+	for (int i = 0; i < IT66121_DETECT_TRIES; i++) {
+		if (i)
+			msleep(IT66121_DETECT_DELAY_MS);
+
+		client = i2c_new_scanned_device(adapter, &board_info, it66121_addr,
+						it66121_i2c_probe);
+		if (!IS_ERR(client))
+			break;
+	}
+
+	return client;
 }
 
 void it66121_destroy(struct i2c_client *client)
@@ -966,7 +980,8 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 
 	client = it66121_i2c_init(adapter);
 	if (IS_ERR(client)) {
-		dev_err(&adapter->dev, "Cannot find IT66121 I2C client\n");
+		dev_err(&adapter->dev, "No IT66121 found (%pe): adapters without one are not supported\n",
+			client);
 		return ERR_CAST(client);
 	}
 
