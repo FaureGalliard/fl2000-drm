@@ -26,3 +26,6 @@ outgoing/
 # Notes and settings of the coding assistant, kept local
 CLAUDE.md
 .claude/
+
+# Personal study notes
+docs/aprendizaje-fl2000.pdf
