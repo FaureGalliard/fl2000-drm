@@ -213,20 +213,31 @@ int fl2000_usb_magic(struct usb_device *usb_dev)
 	return 0;
 }
 
-int fl2000_enable_interrupts(struct usb_device *usb_dev)
+/* The interrupts about monitors: they matter from the moment the device is up, mode or no mode */
+int fl2000_enable_sink_interrupts(struct usb_device *usb_dev)
 {
 	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
-	u32 mask, val;
 
-	val = FL2000_VGA_CTRL_ACLK_VGA_ERR_INT_EN | FL2000_VGA_CTRL_ACLK_LBUF_ERR_INT_EN |
-	      FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN;
-	mask = val | FL2000_VGA_CTRL_ACLK_FEEDBACK_INT_EN;
-	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, mask, val);
+	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN,
+			  FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN);
 
 	regmap_write_bits(regmap, FL2000_VGA_CTRL2_REG_ACLK, FL2000_VGA_CTRL2_ACLK_HDMI_INT_EN,
 			  FL2000_VGA_CTRL2_ACLK_HDMI_INT_EN);
 
 	return 0;
+}
+
+/* All of them, for while a frame is being sent */
+int fl2000_enable_interrupts(struct usb_device *usb_dev)
+{
+	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
+	u32 mask, val;
+
+	val = FL2000_VGA_CTRL_ACLK_VGA_ERR_INT_EN | FL2000_VGA_CTRL_ACLK_LBUF_ERR_INT_EN;
+	mask = val | FL2000_VGA_CTRL_ACLK_FEEDBACK_INT_EN;
+	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, mask, val);
+
+	return fl2000_enable_sink_interrupts(usb_dev);
 }
 
 /*

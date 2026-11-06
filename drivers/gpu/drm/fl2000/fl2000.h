@@ -156,6 +156,7 @@ int fl2000_set_timings(struct usb_device *usb_dev, struct fl2000_timings *timing
 int fl2000_set_pll(struct usb_device *usb_dev, struct fl2000_pll *pll);
 int fl2000_force_connect(struct usb_device *usb_dev, bool force);
 bool fl2000_force_connect_active(struct usb_device *usb_dev);
+int fl2000_enable_sink_interrupts(struct usb_device *usb_dev);
 int fl2000_enable_interrupts(struct usb_device *usb_dev);
 int fl2000_read_status(struct usb_device *usb_dev, u32 *status);
 int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data);

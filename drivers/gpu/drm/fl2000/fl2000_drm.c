@@ -771,6 +771,7 @@ int fl2000_drm_resume(struct device *master)
 	/* The same order as in fl2000_drm_bind() */
 	fl2000_reset(usb_dev);
 	fl2000_usb_magic(usb_dev);
+	fl2000_enable_sink_interrupts(usb_dev);
 
 	/* Without interrupts the connectors are still polled */
 	fl2000_intr_resume(drm_if->intr);
@@ -964,6 +965,7 @@ int fl2000_drm_bind(struct device *master)
 
 	fl2000_reset(usb_dev);
 	fl2000_usb_magic(usb_dev);
+	fl2000_enable_sink_interrupts(usb_dev);
 
 	/*
 	 * Probe the connector before userspace can see the device. A compositor
