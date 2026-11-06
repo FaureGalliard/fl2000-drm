@@ -690,11 +690,12 @@ static void fl2000_xrgb2101010_to_xrgb8888_line(u32 *buf, u32 x_start, u32 x_end
 /*
  * Pull one span of source pixels into the cached line buffer.
  *
- * A framebuffer imported from the primary GPU lives in its VRAM, mapped
- * write-combining, where a plain memcpy_fromio() reads ~100 MB/s: every access
- * is a partial cache-line transaction over PCIe. drm_memcpy_from_wc() uses
- * streaming loads to fetch whole lines, about ten times faster. On cached RAM
- * a non-temporal load is slower than a plain memcpy, so choose per source.
+ * A framebuffer imported from the primary GPU is mapped write-combining,
+ * whether it sits in VRAM (I/O memory) or in system memory pinned for us,
+ * and a plain memcpy reads it at ~100 MB/s: every access is a partial
+ * cache-line transaction. drm_memcpy_from_wc() uses streaming loads to fetch
+ * whole lines, about ten times faster. On our own cached shmem buffers a
+ * non-temporal load is slower than a plain memcpy, so choose per source.
  *
  * Streaming loads move whole 16 bytes and fall back to the slow plain read for
  * any other length, and a line of 1366 pixels is 5464 bytes (78 ms instead of
@@ -703,18 +704,20 @@ static void fl2000_xrgb2101010_to_xrgb8888_line(u32 *buf, u32 x_start, u32 x_end
  * the span land in the line buffer but are not converted.
  */
 static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_map *src_map,
-			     size_t offset, size_t len)
+			     bool wc, size_t offset, size_t len)
 {
 	struct iosys_map dst = IOSYS_MAP_INIT_VADDR(stream->line_buf);
 	struct iosys_map src = *src_map;
+	uintptr_t addr;
 
-	if (!src_map->is_iomem) {
+	if (!wc) {
 		iosys_map_memcpy_from(stream->line_buf, src_map, offset, len);
 		return;
 	}
 
 	iosys_map_incr(&src, offset);
-	if (IS_ALIGNED((uintptr_t)src.vaddr_iomem, 16))
+	addr = src.is_iomem ? (uintptr_t)src.vaddr_iomem : (uintptr_t)src.vaddr;
+	if (IS_ALIGNED(addr, 16))
 		len = ALIGN(len, 16);
 	drm_memcpy_from_wc(&dst, &src, len);
 }
@@ -726,9 +729,10 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
  * happened to be free.
  */
 void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
-			    u32 format, unsigned int width, unsigned int height,
+			    bool imported, u32 format, unsigned int width, unsigned int height,
 			    unsigned int pitch, const struct drm_rect *clip)
 {
+	bool wc = imported || src_map->is_iomem;
 	u32 dst_line_len;
 	u32 x_start, x_end, y_start, y_end;
 	size_t span;
@@ -762,7 +766,7 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		 * and convert from there: converting straight from an uncached
 		 * source issues one read per pixel.
 		 */
-		fl2000_read_span(stream, src_map,
+		fl2000_read_span(stream, src_map, wc,
 				 (size_t)y * pitch + (size_t)x_start * sizeof(u32), span);
 
 		if (format != DRM_FORMAT_XRGB8888)

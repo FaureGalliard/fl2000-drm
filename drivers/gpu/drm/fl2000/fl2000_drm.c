@@ -150,7 +150,18 @@ static struct drm_driver fl2000_drm_driver = {
 	 * (fl2000_stream_compress), never DMA'd to the device, so it does not
 	 * need to be physically contiguous.
 	 */
-	DRM_GEM_SHMEM_DRIVER_OPS,
+	.dumb_create = drm_gem_shmem_dumb_create,
+	/*
+	 * Import with a mapping, not DRM_GEM_SHMEM_DRIVER_OPS' no-map import.
+	 * Mapping the attachment makes the exporter pin the buffer where this
+	 * device can reach it, system memory for amdgpu. Left unmapped, amdgpu
+	 * keeps it in VRAM and vmaps it as one linear range from where it
+	 * thinks it starts, which for a buffer split over several VRAM blocks
+	 * is right for the last block only: at 1360x768 and 1366x768 all but
+	 * the bottom ~10 % of the desktop came out black or garbled.
+	 */
+	.gem_prime_import = drm_gem_prime_import,
+	.gem_prime_import_sg_table = drm_gem_shmem_prime_import_sg_table,
 	DRM_FBDEV_SHMEM_DRIVER_OPS,
 
 	.name = DRM_DRIVER_NAME,
@@ -347,8 +358,8 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 	if (drm_dev_enter(plane->dev, &idx)) {
 		start = ktime_get();
 		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0],
-				       fb->format->format, fb->width, fb->height,
-				       fb->pitches[0], &damage);
+				       drm_gem_is_imported(fb->obj[0]), fb->format->format,
+				       fb->width, fb->height, fb->pitches[0], &damage);
 		fl2000_stream_note_render(drm_if->stream,
 					  (unsigned int)ktime_us_delta(ktime_get(), start),
 					  drm_rect_width(&damage) * drm_rect_height(&damage));
