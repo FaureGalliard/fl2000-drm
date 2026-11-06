@@ -64,6 +64,8 @@ bool fl2000_intr_sink_changed(struct fl2000_intr *intr)
  *
  * The chip powers the DAC and the PLL only while this is the case. On the boards with both
  * outputs the input follows whichever monitor is connected, so it does not tell VGA from HDMI.
+ * While HDMI is being driven the sense is forced on and tells nothing: that counts as not sensing,
+ * or an HDMI monitor going away would look like a VGA one showing up, until the CRTC is disabled.
  *
  * Return: 1 if a monitor is sensed, 0 if not, a negative error code if the status cannot be read
  */
@@ -75,6 +77,9 @@ int fl2000_intr_monitor_connected(struct fl2000_intr *intr)
 	ret = fl2000_intr_read_status(intr, &status);
 	if (ret)
 		return ret;
+
+	if (fl2000_force_connect_active(intr->usb_dev))
+		return 0;
 
 	return !!(status & FL2000_VGA_STATUS_MONITOR_STATUS);
 }

@@ -109,6 +109,15 @@ int fl2000_force_connect(struct usb_device *usb_dev, bool force)
 				 force ? FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT : 0);
 }
 
+/* Is the chip's monitor sense forced on: then it does not follow any cable */
+bool fl2000_force_connect_active(struct usb_device *usb_dev)
+{
+	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
+
+	return regmap_test_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
+				FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT) > 0;
+}
+
 int fl2000_set_timings(struct usb_device *usb_dev, struct fl2000_timings *timings)
 {
 	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
