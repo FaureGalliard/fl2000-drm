@@ -166,7 +166,7 @@ static int it66121_configure_afe(struct it66121_priv *priv, int clock_khz)
 		ret = regmap_write_bits(priv->regmap, IT66121_AFE_IP_CONTROL_1, 0x89, 0x80);
 		if (ret)
 			return ret;
-		ret = regmap_write_bits(priv->regmap, IT66121_AFE_IP_CONTROL_3, 0x10, 0x80);
+		ret = regmap_write_bits(priv->regmap, IT66121_AFE_IP_CONTROL_3, 0x10, 0);
 		if (ret)
 			return ret;
 	} else {
