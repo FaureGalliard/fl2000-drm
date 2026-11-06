@@ -334,7 +334,9 @@ What it undid, and why that was there, as it may come back as a question:
 - **Cursor plane.** It existed because Mutter leaves the pointer on the hardware cursor
   of the primary GPU, where it never reaches this output. His answer: fix the compositor.
 - **Vblank timer.** For virtual displays for now. Without vblank the atomic helpers
-  complete the events at once, and only USB flow control paces the link.
+  complete the events at once, and only USB flow control paces the link. Measured in the
+  VM: atomic flips at 356 Hz in a 79 Hz mode (79.3 before), `modetest -v` at 146 Hz (59.94
+  before), so a client that waits for events is not paced by them any more.
 - **EDID cache.** It avoided a stall of about a second per probe with the mode config
   locked. His answer: the helpers manage this.
 - **10-bit formats.** See the bug history: without them Mutter 51 goes down a copy path

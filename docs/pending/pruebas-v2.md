@@ -21,8 +21,10 @@ riesgo:
 3. **El puntero en GNOME.** Sin plano de cursor puede que no aparezca en esta salida.
    Thomas ya lo sabe y dice que se arregla en el compositor; solo hay que anotar qué
    pasa.
-4. **Consumo sin vblank.** `top` con el escritorio quieto y arrastrando una ventana:
-   comparar con antes. En el log, `rendered/s` no debería dispararse.
+4. **Consumo sin vblank.** En la VM, sin nada que frene, los flips ya no van al ritmo
+   del modo: 356 Hz en un modo de 79 Hz (antes 79.3), y `modetest -v` 146 Hz (antes
+   59.94). `top` con el escritorio quieto y arrastrando una ventana: comparar con antes,
+   y en el log mirar si `rendered/s` se dispara.
 5. **Tirón al conectar.** El EDID se lee en cada sondeo: puede volver el pequeño parón
    del escritorio al conectar un monitor.
 
