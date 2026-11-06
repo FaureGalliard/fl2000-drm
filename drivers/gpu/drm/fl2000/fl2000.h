@@ -30,7 +30,6 @@
 #include <drm/drm_plane.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_modeset_helper_vtables.h>
-#include <drm/drm_vblank.h>
 
 #include "fl2000_registers.h"
 

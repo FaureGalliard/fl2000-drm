@@ -16,7 +16,6 @@
 #include <drm/drm_managed.h>
 #include <drm/drm_modeset_helper.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/drm_vblank_helper.h>
 
 #include "fl2000.h"
 #include "fl2000_it66121.h"
@@ -547,8 +546,6 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 
 		drm_dev_exit(idx);
 	}
-
-	drm_crtc_vblank_atomic_enable(crtc, state);
 }
 
 static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
@@ -563,15 +560,12 @@ static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_
 		fl2000_force_connect(drm_if->regmap, false);
 		drm_dev_exit(idx);
 	}
-
-	drm_crtc_vblank_atomic_disable(crtc, state);
 }
 
 static const struct drm_crtc_helper_funcs fl2000_crtc_helper_funcs = {
 	.mode_valid = fl2000_crtc_mode_valid,
 	.atomic_check = fl2000_crtc_atomic_check,
 	.mode_set_nofb = fl2000_crtc_mode_set_nofb,
-	.atomic_flush = drm_crtc_vblank_atomic_flush,
 	.atomic_enable = fl2000_crtc_atomic_enable,
 	.atomic_disable = fl2000_crtc_atomic_disable,
 };
@@ -582,11 +576,6 @@ static const struct drm_crtc_funcs fl2000_crtc_funcs = {
 	.page_flip = drm_atomic_helper_page_flip,
 	.atomic_duplicate_state = drm_atomic_helper_crtc_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_crtc_destroy_state,
-	/*
-	 * The FL2000 has no vblank interrupt: vblank events come from a timer
-	 * running at the mode's refresh rate.
-	 */
-	DRM_CRTC_VBLANK_TIMER_FUNCS,
 };
 
 /*
@@ -879,13 +868,6 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	}
 
 	drm_mode_config_reset(drm);
-
-	ret = drm_vblank_init(drm, drm->mode_config.num_crtc);
-	if (ret) {
-		drm_err(drm, "Failed to initialize %d VBLANK(s) (%d)\n",
-			drm->mode_config.num_crtc, ret);
-		goto err_destroy_intr;
-	}
 
 	fl2000_chip_setup(drm_if);
 
