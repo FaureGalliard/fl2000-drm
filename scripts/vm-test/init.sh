@@ -89,10 +89,6 @@ basic() {
 	show_verify 1024 768 1200 800 3 5 ar30 3
 	scan T04
 
-	say "T05 cursor plane"
-	$T/fl2000-t cursor $(card) 3 && pass "cursor commits" || fail "cursor commits"
-	scan T05
-
 	say "T06 a huge mode with the primary plane off screen"
 	$T/fl2000-t hugemode $(card) && pass "huge mode rejected" || fail "huge mode"
 	scan T06
@@ -283,7 +279,6 @@ variants() {
 	emu_start --high-speed
 	wait_card && pass "binds on high speed" || fail "no device on high speed"
 	show_verify 640 480 640 480 0 0 xr24 2
-	$T/fl2000-t cursor $(card) 2 640 480 25000 && pass "cursor at RGB565" || fail "cursor at RGB565"
 	scan T42
 	emu_stop; wait_nocard; sleep 0.5
 }

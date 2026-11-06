@@ -98,12 +98,6 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 void fl2000_stream_note_render(struct fl2000_stream *stream, unsigned int conv_us,
 			       unsigned int damage_px);
 
-/* Largest cursor sprite the blend path accepts, advertised to userspace */
-#define FL2000_CURSOR_MAX 64
-
-void fl2000_stream_set_cursor(struct fl2000_stream *stream, const u32 *argb, unsigned int w,
-			      unsigned int h, int x, int y);
-void fl2000_stream_move_cursor(struct fl2000_stream *stream, int x, int y);
 int fl2000_stream_enable(struct fl2000_stream *stream);
 void fl2000_stream_disable(struct fl2000_stream *stream);
 

@@ -6,7 +6,7 @@
 # The FL2000 wants the two 32-bit halves of every 64-bit word of the frame
 # swapped, and the frame is one flat stream, so a line of a width whose byte
 # length is not a multiple of 8 (1366 pixels at 3 bytes) starts in the middle of
-# a word. This script extracts the real converters, the cursor blend and the
+# a word. This script extracts the real converters and the
 # rectangle copy from the driver source, builds them against a few stubs and
 # compares them, for many widths and rectangles, with an independent reference:
 # convert the frame linearly, then swap the halves of each 64-bit word. The damage
@@ -26,8 +26,7 @@ import tempfile
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, 'drivers/gpu/drm/fl2000/fl2000_streaming.c')
 
-FUNCS = ['fl2000_blend_channel', 'fl2000_blend_cursor_rgb565_line',
-         'fl2000_blend_cursor_rgb888_line', 'fl2000_blend_cursor', 'fl2000_copy_rect',
+FUNCS = ['fl2000_copy_rect',
          'fl2000_xrgb8888_to_rgb888_line', 'fl2000_xrgb8888_to_rgb565_line',
          'fl2000_xrgb2101010_to_xrgb8888_line', 'fl2000_read_span', 'fl2000_stream_compress']
 
@@ -80,9 +79,6 @@ struct fl2000_stream {
 	u32 shadow_seq;
 	struct drm_rect damage_log[FL2000_DAMAGE_LOG];
 	u32 *line_buf;
-	u32 *cursor_argb;
-	u32 cursor_w, cursor_h;
-	int cursor_x, cursor_y;
 };
 '''
 
@@ -119,39 +115,6 @@ static u8 *ref_convert(const u32 *src, u32 w, u32 h, u32 bpp)
 		out[p ^ 4] = lin[p];
 	free(lin);
 	return out;
-}
-
-static u8 blend(u8 d, u8 s, u8 a)
-{
-	u32 v = s + (d * (255 - a) + 127) / 255;
-
-	return v > 255 ? 255 : (u8)v;
-}
-
-/* Reference cursor: blend in the linear domain, on the frame the reference converted */
-static u32 ref_blend_pixel(u32 dst_pix, u32 spr, u32 bpp)
-{
-	u8 a = spr >> 24;
-
-	if (!a)
-		return dst_pix;
-	if (bpp == 3) {
-		u8 b = blend(dst_pix, spr, a), g = blend(dst_pix >> 8, spr >> 8, a),
-		   r = blend(dst_pix >> 16, spr >> 16, a);
-
-		return (dst_pix & 0xFF000000) | (r << 16) | (g << 8) | b;
-	} else {
-		u16 d = pack565(dst_pix);
-		u8 r = ((d & 0xF800) >> 8) | ((d & 0xF800) >> 13);
-		u8 g = ((d & 0x07E0) >> 3) | ((d & 0x07E0) >> 9);
-		u8 b = ((d & 0x001F) << 3) | ((d & 0x001F) >> 2);
-
-		r = blend(r, spr >> 16, a);
-		g = blend(g, spr >> 8, a);
-		b = blend(b, spr, a);
-		/* Return something pack565() maps to the blended value */
-		return ((u32)(r & 0xF8) << 16) | ((u32)(g & 0xFC) << 8) | (b & 0xF8);
-	}
 }
 
 static int fail(const char *what, u32 w, u32 h, u32 bpp, size_t at)
@@ -217,44 +180,6 @@ static int test_case(u32 w, u32 h, u32 bpp)
 			return fail("copy_rect", w, h, bpp, d);
 		free(buf);
 		free(want2);
-	}
-
-	/* 3. cursor blend */
-	{
-		u32 cw = 1 + rndn(20), ch = 1 + rndn(20), *spr = malloc(cw * ch * 4);
-		struct drm_rect rect;
-		u32 *exp = malloc((size_t)w * h * 4);
-		u8 *wantc;
-
-		for (u32 i = 0; i < cw * ch; i++)
-			spr[i] = rnd() % 4 ? rnd() : (rnd() & 0x00FFFFFF);
-		st.cursor_argb = spr;
-		st.cursor_w = cw;
-		st.cursor_h = ch;
-		st.cursor_x = (int)rndn(w + cw) - (int)cw;
-		st.cursor_y = (int)rndn(h + ch) - (int)ch;
-
-		memcpy(exp, src, (size_t)w * h * 4);
-		for (u32 sy = 0; sy < ch; sy++)
-			for (u32 sx = 0; sx < cw; sx++) {
-				int x = st.cursor_x + (int)sx, y = st.cursor_y + (int)sy;
-
-				if (x >= 0 && x < (int)w && y >= 0 && y < (int)h)
-					exp[(size_t)y * w + x] =
-						ref_blend_pixel(exp[(size_t)y * w + x],
-								spr[sy * cw + sx], bpp);
-			}
-		wantc = ref_convert(exp, w, h, bpp);
-		buf = malloc(sz);
-		memcpy(buf, want, sz);
-		fl2000_blend_cursor(&st, buf, &rect);
-		d = first_diff(buf, wantc, sz);
-		if (d >= 0)
-			return fail("cursor", w, h, bpp, d);
-		free(buf);
-		free(wantc);
-		free(exp);
-		free(spr);
 	}
 
 	free(src); free(src2); free(want); free(shadow);
@@ -335,7 +260,7 @@ int main(void)
 			return 1;
 		cases += 2;
 	}
-	printf("OK: %ld cases (converters, rectangle copy, cursor blend, damage conversion)\n", cases);
+	printf("OK: %ld cases (converters, rectangle copy, damage conversion)\n", cases);
 	return 0;
 }
 '''

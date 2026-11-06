@@ -5,7 +5,6 @@
  *   fl2000-t hugemode <card>            a huge mode with an off-screen primary plane: must be rejected
  *   fl2000-t show <card> <w> <h> <fbw> <fbh> <sx> <sy> <secs> <fmt>   atomic commit with a pattern
  *   fl2000-t failnth <card> <max>       mode sets with allocation failures injected
- *   fl2000-t cursor <card> <secs>       set and move a cursor while streaming
  *   fl2000-t reset <busnum> <devnum>    USBDEVFS_RESET
  *   fl2000-t i2c0 <dev>                 zero-length and write-write I2C_RDWR
  *   fl2000-t hold <card> <secs>         hold the card open
@@ -31,7 +30,7 @@
 #include <drm_fourcc.h>
 
 static int fd;
-static uint32_t conn_id, crtc_id, plane_id, cursor_id;
+static uint32_t conn_id, crtc_id, plane_id;
 
 static uint32_t prop(uint32_t obj, uint32_t type, const char *name)
 {
@@ -89,8 +88,6 @@ static int open_card(const char *path)
 			if (r && !strcmp(r->name, "type")) {
 				if (p->prop_values[j] == DRM_PLANE_TYPE_PRIMARY)
 					plane_id = pl->planes[i];
-				else if (p->prop_values[j] == DRM_PLANE_TYPE_CURSOR)
-					cursor_id = pl->planes[i];
 			}
 			drmModeFreeProperty(r);
 		}
@@ -212,25 +209,7 @@ static int cmd_hugemode(void)
 	ret = commit(&m, &f, 0, 0, 64, 64, 60000, DRM_MODE_ATOMIC_ALLOW_MODESET);
 	printf("huge mode with off-screen primary: %s\n", ret ? strerror(-ret) : "ACCEPTED");
 	if (!ret) {
-		/* Make the stream use it: a cursor far down in the frame writes far past the buffers */
-		struct fbuf c;
-		drmModeAtomicReq *req = drmModeAtomicAlloc();
-
-		if (make_fb(&c, 64, 64, DRM_FORMAT_ARGB8888))
-			return 2;
-		memset(c.map, 0xff, c.size);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "FB_ID"), c.id);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_ID"), crtc_id);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_X"), 100);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_Y"), 30000);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_W"), 64);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_H"), 64);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "SRC_W"), 64 << 16);
-		drmModeAtomicAddProperty(req, cursor_id, prop(cursor_id, DRM_MODE_OBJECT_PLANE, "SRC_H"), 64 << 16);
-		ret = drmModeAtomicCommit(fd, req, 0, NULL);
-		printf("cursor far down in the frame: %s\n", ret ? strerror(errno) : "accepted");
 		fflush(stdout);
-		drmModeAtomicFree(req);
 		sleep(3);
 		disable_all();
 		return 1;
@@ -448,50 +427,6 @@ static int cmd_storm(int secs)
 	return 0;
 }
 
-static int cmd_cursor(int secs, int w, int h, int clock)
-{
-	struct fbuf f, c;
-	drmModeModeInfo m;
-	drmModeAtomicReq *req;
-	int ret;
-	uint32_t p_fb, p_crtc, p_cx, p_cy, p_cw, p_ch, p_sw, p_sh;
-
-	if (!cursor_id)
-		return fprintf(stderr, "no cursor plane\n"), 2;
-	if (make_fb(&f, w, h, DRM_FORMAT_XRGB8888) || make_fb(&c, 64, 64, DRM_FORMAT_ARGB8888))
-		return 2;
-	memset(c.map, 0x80, c.size);
-	make_mode(&m, w, h, clock);
-	ret = commit(&m, &f, 0, 0, w, h, 0, DRM_MODE_ATOMIC_ALLOW_MODESET);
-	if (ret)
-		return fprintf(stderr, "commit: %s\n", strerror(-ret)), 1;
-	p_fb = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "FB_ID");
-	p_crtc = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_ID");
-	p_cx = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_X");
-	p_cy = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_Y");
-	p_cw = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_W");
-	p_ch = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "CRTC_H");
-	p_sw = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "SRC_W");
-	p_sh = prop(cursor_id, DRM_MODE_OBJECT_PLANE, "SRC_H");
-	for (int i = 0; i < secs * 20; i++) {
-		req = drmModeAtomicAlloc();
-		drmModeAtomicAddProperty(req, cursor_id, p_fb, c.id);
-		drmModeAtomicAddProperty(req, cursor_id, p_crtc, crtc_id);
-		drmModeAtomicAddProperty(req, cursor_id, p_cx, (i * 7) % 1100 - 30);
-		drmModeAtomicAddProperty(req, cursor_id, p_cy, (i * 5) % 800 - 30);
-		drmModeAtomicAddProperty(req, cursor_id, p_cw, 64);
-		drmModeAtomicAddProperty(req, cursor_id, p_ch, 64);
-		drmModeAtomicAddProperty(req, cursor_id, p_sw, 64 << 16);
-		drmModeAtomicAddProperty(req, cursor_id, p_sh, 64 << 16);
-		ret = drmModeAtomicCommit(fd, req, 0, NULL);
-		drmModeAtomicFree(req);
-		if (ret)
-			return fprintf(stderr, "cursor commit: %s\n", strerror(errno)), 1;
-		usleep(50000);
-	}
-	return 0;
-}
-
 static int cmd_i2c0(const char *dev)
 {
 	int f = open(dev, O_RDWR);
@@ -588,9 +523,6 @@ int main(int argc, char **argv)
 		return cmd_show(argv + 3);
 	if (!strcmp(argv[1], "failnth"))
 		return cmd_failnth(atoi(argv[3]), atoi(argv[4]));
-	if (!strcmp(argv[1], "cursor"))
-		return cmd_cursor(atoi(argv[3]), argc > 4 ? atoi(argv[4]) : 1024, argc > 5 ? atoi(argv[5]) : 768,
-				  argc > 6 ? atoi(argv[6]) : 65000);
 	if (!strcmp(argv[1], "flips"))
 		return cmd_flips(atoi(argv[3]));
 	if (!strcmp(argv[1], "damage"))

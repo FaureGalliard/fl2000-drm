@@ -8,8 +8,7 @@
  *
  * The current frame lives in a shadow buffer, already in the device's pixel
  * format. Damage is converted into the shadow and nowhere else, and every
- * outgoing URB buffer is brought up to date from it just before it is sent,
- * with the cursor blended in on the way out.
+ * outgoing URB buffer is brought up to date from it just before it is sent.
  *
  * (C) Copyright 2017, Fresco Logic, Incorporated.
  * (C) Copyright 2018-2020, Artem Mygaiev
@@ -49,14 +48,8 @@ struct fl2000_stream;
 struct fl2000_stream_buf {
 	struct fl2000_stream *stream;
 	struct list_head list;
-	/*
-	 * Generation of the desktop content and of the cursor this buffer was
-	 * built from. Both matching means the buffer can be resent as it is.
-	 */
+	/* Generation of the content this buffer was built from: if current, it is resent as it is */
 	u32 seq;
-	u32 cursor_seq;
-	/* Where the cursor was blended in, so it can be lifted again */
-	struct drm_rect cursor_rect;
 	struct sg_table sgt;
 	struct page **pages;
 	unsigned int nr_pages;
@@ -79,7 +72,7 @@ struct fl2000_stream {
 	 * buffer is a copy of it.
 	 */
 	void *shadow;
-	struct mutex shadow_lock; /* Serialises shadow and cursor against the send path */
+	struct mutex shadow_lock; /* Serialises the shadow against the send path */
 	u32 shadow_seq;
 	/*
 	 * What changed at each shadow generation. A buffer that is only a few
@@ -88,22 +81,11 @@ struct fl2000_stream {
 	 */
 	struct drm_rect damage_log[FL2000_DAMAGE_LOG];
 	/*
-	 * Bumped by cursor changes only, so moving the pointer never
-	 * invalidates the desktop content a buffer already holds.
-	 */
-	u32 cursor_seq;
-	/*
 	 * The buffer that carries the most recent content. Only the send path
 	 * writes a buffer, and never one that is in flight, so it can be
 	 * copied from without a lock.
 	 */
 	struct fl2000_stream_buf *newest_sb;
-	/* Cursor sprite in ARGB8888, blended on the way out */
-	u32 *cursor_argb;
-	unsigned int cursor_w;
-	unsigned int cursor_h;
-	int cursor_x;
-	int cursor_y;
 	struct work_struct work;
 	struct workqueue_struct *work_queue;
 	/* URBs the work may still submit: limits the frames in flight */
@@ -338,107 +320,7 @@ static int fl2000_stream_submit(struct fl2000_stream *stream, struct urb *urb)
  * ('^ 4' on bytes for 24bpp, '^ 2' on 16-bit words for 16bpp) to the offset
  * from the start of the FRAME, which is why they take the frame base and the
  * offset of the line in it, never a pointer to the line.
- *
- * Cursor compositing. The sprite is blended into each outgoing frame rather
- * than into the shadow, so moving the pointer costs one 64x64 blend and never
- * re-reads the source framebuffer. Its colours are premultiplied by its alpha,
- * as the "pixel blend mode" of the cursor plane says.
  */
-static inline u8 fl2000_blend_channel(u8 dst, u8 src, u8 alpha)
-{
-	return (u8)min(src + (dst * (255 - alpha) + 127) / 255, 255);
-}
-
-/* 'line' is the offset of the line in the frame, in 16-bit words */
-static void fl2000_blend_cursor_rgb565_line(u16 *frame, size_t line, const u32 *cbuf, u32 x_start,
-					    u32 x_end)
-{
-	for (unsigned int x = x_start; x < x_end; x++) {
-		size_t idx = (line + x) ^ 2;
-		u32 pix = *cbuf++;
-		u8 alpha = (u8)(pix >> 24);
-		u16 dst;
-		u8 r, g, b;
-
-		if (!alpha)
-			continue;
-
-		/* Expand the destination to 8 bits per channel, blend, pack again */
-		dst = frame[idx];
-		r = (u8)(((dst & 0xF800) >> 8) | ((dst & 0xF800) >> 13));
-		g = (u8)(((dst & 0x07E0) >> 3) | ((dst & 0x07E0) >> 9));
-		b = (u8)(((dst & 0x001F) << 3) | ((dst & 0x001F) >> 2));
-
-		r = fl2000_blend_channel(r, (u8)(pix >> 16), alpha);
-		g = fl2000_blend_channel(g, (u8)(pix >> 8), alpha);
-		b = fl2000_blend_channel(b, (u8)pix, alpha);
-
-		frame[idx] = (u16)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
-	}
-}
-
-/* 'line' is the offset of the line in the frame, in bytes */
-static void fl2000_blend_cursor_rgb888_line(u8 *frame, size_t line, const u32 *cbuf, u32 x_start,
-					    u32 x_end)
-{
-	size_t xx = line + (size_t)x_start * 3;
-
-	for (unsigned int x = x_start; x < x_end; x++) {
-		u32 pix = *cbuf++;
-		u8 alpha = (u8)(pix >> 24);
-
-		if (!alpha) {
-			xx += 3;
-			continue;
-		}
-
-		/* Read and write through the swizzle */
-		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)pix, alpha);
-		xx++;
-		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)(pix >> 8), alpha);
-		xx++;
-		frame[xx ^ 4] = fl2000_blend_channel(frame[xx ^ 4], (u8)(pix >> 16), alpha);
-		xx++;
-	}
-}
-
-/*
- * Blend the cursor into 'dst' and report the area it covered in 'rect', so the
- * next rebuild knows exactly what to restore.
- */
-static void fl2000_blend_cursor(struct fl2000_stream *stream, void *dst, struct drm_rect *rect)
-{
-	u32 dst_line_len = stream->width * stream->bytes_pix;
-	int cy_start, cy_end, cx_start, cx_end;
-
-	*rect = (struct drm_rect){ 0, 0, 0, 0 };
-
-	if (!stream->cursor_w || !stream->cursor_h || !stream->width)
-		return;
-
-	/* The cursor may hang off any edge of the frame */
-	cx_start = max(stream->cursor_x, 0);
-	cy_start = max(stream->cursor_y, 0);
-	cx_end = min(stream->cursor_x + (int)stream->cursor_w, (int)stream->width);
-	cy_end = min(stream->cursor_y + (int)stream->cursor_h, (int)stream->height);
-	if (cx_start >= cx_end || cy_start >= cy_end)
-		return;
-
-	*rect = (struct drm_rect){ cx_start, cy_start, cx_end, cy_end };
-
-	for (int y = cy_start; y < cy_end; y++) {
-		const u32 *cline = stream->cursor_argb +
-				   (size_t)(y - stream->cursor_y) * stream->cursor_w +
-				   (cx_start - stream->cursor_x);
-
-		if (stream->bytes_pix == 2)
-			fl2000_blend_cursor_rgb565_line(dst, (size_t)y * stream->width, cline,
-							cx_start, cx_end);
-		else if (stream->bytes_pix == 3)
-			fl2000_blend_cursor_rgb888_line(dst, (size_t)y * dst_line_len, cline,
-							cx_start, cx_end);
-	}
-}
 
 /*
  * Copy one rectangle of the shadow into an outgoing buffer. The pixels of a
@@ -475,10 +357,9 @@ static void fl2000_copy_rect(struct fl2000_stream *stream, void *dst, const stru
 }
 
 /*
- * Fill one URB buffer with what should be on screen now: the shadow frame plus
- * the cursor. A buffer that is only a few generations behind replays the
- * damage rectangles since, rather than copying the whole frame, and a buffer
- * whose desktop content is current only has the cursor lifted and re-blended.
+ * Fill one URB buffer with what should be on screen now, the shadow frame. A
+ * buffer that is only a few generations behind replays the damage rectangles
+ * since, rather than copying the whole frame.
  */
 static void fl2000_stream_build(struct fl2000_stream *stream, struct fl2000_stream_buf *sb)
 {
@@ -494,12 +375,9 @@ static void fl2000_stream_build(struct fl2000_stream *stream, struct fl2000_stre
 
 		atomic_inc(&stream->stalled);
 
-		if (newest && newest != sb &&
-		    (sb->seq != newest->seq || sb->cursor_seq != newest->cursor_seq)) {
+		if (newest && newest != sb && sb->seq != newest->seq) {
 			memcpy(sb->vaddr, newest->vaddr, stream->buf_size);
 			sb->seq = newest->seq;
-			sb->cursor_seq = newest->cursor_seq;
-			sb->cursor_rect = newest->cursor_rect;
 		}
 
 		return;
@@ -527,15 +405,6 @@ static void fl2000_stream_build(struct fl2000_stream *stream, struct fl2000_stre
 		}
 
 		sb->seq = stream->shadow_seq;
-		/* The copy may have overwritten part of the blended cursor */
-		sb->cursor_seq = 0;
-	}
-
-	if (sb->cursor_seq != stream->cursor_seq) {
-		/* Lift the old cursor by restoring the desktop underneath it */
-		fl2000_copy_rect(stream, sb->vaddr, &sb->cursor_rect);
-		fl2000_blend_cursor(stream, sb->vaddr, &sb->cursor_rect);
-		sb->cursor_seq = stream->cursor_seq;
 	}
 
 	stream->newest_sb = sb;
@@ -805,49 +674,6 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		(struct drm_rect){ x_start, y_start, x_end, y_end };
 }
 
-/*
- * Hand the cursor sprite and its position to the send path. 'argb' may be NULL
- * to hide the cursor.
- */
-void fl2000_stream_set_cursor(struct fl2000_stream *stream, const u32 *argb, unsigned int w,
-			      unsigned int h, int x, int y)
-{
-	if (w > FL2000_CURSOR_MAX || h > FL2000_CURSOR_MAX)
-		return;
-
-	guard(mutex)(&stream->shadow_lock);
-
-	/* Nothing visible before or after: do not rebuild every outgoing frame */
-	if (!argb && !stream->cursor_w)
-		return;
-
-	if (argb) {
-		memcpy(stream->cursor_argb, argb, (size_t)w * h * sizeof(u32));
-		stream->cursor_w = w;
-		stream->cursor_h = h;
-		stream->cursor_x = x;
-		stream->cursor_y = y;
-	} else {
-		stream->cursor_w = 0;
-		stream->cursor_h = 0;
-	}
-
-	stream->cursor_seq++;
-}
-
-/* Move the cursor without touching its image, the common case by far */
-void fl2000_stream_move_cursor(struct fl2000_stream *stream, int x, int y)
-{
-	guard(mutex)(&stream->shadow_lock);
-
-	if (!stream->cursor_w || (stream->cursor_x == x && stream->cursor_y == y))
-		return;
-
-	stream->cursor_x = x;
-	stream->cursor_y = y;
-	stream->cursor_seq++;
-}
-
 int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
 			   unsigned int height, u32 bytes_pix)
 {
@@ -881,12 +707,8 @@ int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
 			return -ENOMEM;
 		}
 
-		/*
-		 * Both generations move on from zero: a buffer carrying zero has never
-		 * been built and always takes the full-copy path.
-		 */
+		/* A buffer carrying zero has never been built and takes the full-copy path */
 		stream->shadow_seq++;
-		stream->cursor_seq++;
 
 		stream->buf_size = size;
 	}
@@ -979,11 +801,8 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 
 	/* One scanline of source pixels, for the widest mode we advertise */
 	stream->line_buf = kmalloc_objs(*stream->line_buf, FL2000_MAX_LINE_PIXELS);
-	/* The largest cursor, allocated once: the atomic update must not fail */
-	stream->cursor_argb = kmalloc_objs(*stream->cursor_argb,
-					   FL2000_CURSOR_MAX * FL2000_CURSOR_MAX);
 	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
-	if (!stream->line_buf || !stream->cursor_argb || !stream->work_queue) {
+	if (!stream->line_buf || !stream->work_queue) {
 		fl2000_stream_destroy(stream);
 		return ERR_PTR(-ENOMEM);
 	}
@@ -999,7 +818,6 @@ void fl2000_stream_destroy(struct fl2000_stream *stream)
 	}
 	fl2000_stream_put_buffers(stream);
 	vfree(stream->shadow);
-	kfree(stream->cursor_argb);
 	kfree(stream->line_buf);
 	mutex_destroy(&stream->shadow_lock);
 	kfree(stream);

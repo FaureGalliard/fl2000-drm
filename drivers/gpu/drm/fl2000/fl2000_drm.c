@@ -49,11 +49,6 @@ static const u32 fl2000_pixel_formats[] = {
 	DRM_FORMAT_ARGB2101010,
 };
 
-/* The cursor sprite is blended into the outgoing frame by the CPU */
-static const u32 fl2000_cursor_formats[] = {
-	DRM_FORMAT_ARGB8888,
-};
-
 /*
  * Maximum pixel clock set to 500MHz. It is hard to get more or less precise PLL configuration for
  * higher clock.
@@ -134,11 +129,6 @@ struct fl2000_drm_if {
 	struct usb_device *usb_dev;
 	struct drm_device drm;
 	struct drm_plane plane;
-	/*
-	 * Without a cursor plane of its own the compositor keeps the pointer on
-	 * the primary GPU's hardware cursor, where it never reaches this output.
-	 */
-	struct drm_plane cursor;
 	struct drm_crtc crtc;
 	struct drm_encoder encoder;
 	struct fl2000_vga vga;
@@ -348,21 +338,13 @@ static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *new_crtc_state = NULL;
-	bool is_cursor = plane->type == DRM_PLANE_TYPE_CURSOR;
-
-	/* Clipping a larger sprite would put a truncated pointer on screen */
-	if (is_cursor && new_plane_state->fb &&
-	    (new_plane_state->fb->width > FL2000_CURSOR_MAX ||
-	     new_plane_state->fb->height > FL2000_CURSOR_MAX))
-		return -EINVAL;
 
 	if (new_plane_state->crtc)
 		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	/* The cursor may be placed anywhere; the primary plane is the frame */
 	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
 						   DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
-						   is_cursor, false);
+						   false, false);
 }
 
 /*
@@ -403,64 +385,6 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 
 	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
 }
-
-/*
- * Hand the cursor sprite to the stream, which blends it into every outgoing
- * frame. Moving the pointer keeps the same framebuffer and skips the copy.
- */
-static void fl2000_cursor_atomic_update(struct drm_plane *plane, struct drm_atomic_commit *state)
-{
-	struct drm_plane_state *old_plane_state = drm_atomic_get_old_plane_state(state, plane);
-	struct drm_plane_state *plane_state = drm_atomic_get_new_plane_state(state, plane);
-	struct drm_shadow_plane_state *shadow_plane_state = to_drm_shadow_plane_state(plane_state);
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(plane->dev);
-	struct drm_framebuffer *fb = plane_state->fb;
-	unsigned int w, h;
-	u32 *sprite;
-	int idx;
-
-	if (!fb || !plane_state->visible) {
-		fl2000_stream_set_cursor(drm_if->stream, NULL, 0, 0, 0, 0);
-		return;
-	}
-
-	if (fb == old_plane_state->fb && old_plane_state->visible) {
-		fl2000_stream_move_cursor(drm_if->stream, plane_state->crtc_x, plane_state->crtc_y);
-		return;
-	}
-
-	/* Size is bounded by the atomic check */
-	w = fb->width;
-	h = fb->height;
-
-	/* Repack into a tightly packed sprite: the framebuffer has its own pitch */
-	sprite = kmalloc_objs(*sprite, (size_t)w * h);
-	if (!sprite)
-		return;
-
-	if (drm_gem_fb_begin_cpu_access(fb, DMA_FROM_DEVICE))
-		goto out_free;
-
-	if (drm_dev_enter(plane->dev, &idx)) {
-		for (unsigned int y = 0; y < h; y++)
-			iosys_map_memcpy_from(sprite + (size_t)y * w, &shadow_plane_state->data[0],
-					      (size_t)y * fb->pitches[0], (size_t)w * sizeof(u32));
-
-		fl2000_stream_set_cursor(drm_if->stream, sprite, w, h, plane_state->crtc_x,
-					 plane_state->crtc_y);
-		drm_dev_exit(idx);
-	}
-
-	drm_gem_fb_end_cpu_access(fb, DMA_FROM_DEVICE);
-out_free:
-	kfree(sprite);
-}
-
-static const struct drm_plane_helper_funcs fl2000_cursor_helper_funcs = {
-	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
-	.atomic_check = fl2000_plane_atomic_check,
-	.atomic_update = fl2000_cursor_atomic_update,
-};
 
 static const struct drm_plane_helper_funcs fl2000_plane_helper_funcs = {
 	DRM_GEM_SHADOW_PLANE_HELPER_FUNCS,
@@ -862,9 +786,6 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	mode_config->max_width = FL2000_MAX_WIDTH;
 	mode_config->min_height = 1;
 	mode_config->max_height = FL2000_MAX_HEIGHT;
-	/* Userspace sizes its sprite to this; a larger one is rejected */
-	mode_config->cursor_width = FL2000_CURSOR_MAX;
-	mode_config->cursor_height = FL2000_CURSOR_MAX;
 
 	ret = drm_universal_plane_init(drm, &drm_if->plane, 0, &fl2000_plane_funcs,
 				       fl2000_pixel_formats, ARRAY_SIZE(fl2000_pixel_formats),
@@ -893,23 +814,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	 */
 	drm_plane_enable_fb_damage_clips(&drm_if->plane);
 
-	ret = drm_universal_plane_init(drm, &drm_if->cursor, 0, &fl2000_plane_funcs,
-				       fl2000_cursor_formats, ARRAY_SIZE(fl2000_cursor_formats),
-				       fl2000_plane_format_modifiers, DRM_PLANE_TYPE_CURSOR, NULL);
-	if (ret) {
-		drm_err(drm, "Cannot initialize cursor plane (%d)\n", ret);
-		return ERR_PTR(ret);
-	}
-	drm_plane_helper_add(&drm_if->cursor, &fl2000_cursor_helper_funcs);
-
-	/* What fl2000_blend_channel() does */
-	ret = drm_plane_create_blend_mode_property(&drm_if->cursor, BIT(DRM_MODE_BLEND_PREMULTI));
-	if (ret) {
-		drm_err(drm, "Cannot set the cursor blend mode (%d)\n", ret);
-		return ERR_PTR(ret);
-	}
-
-	ret = drmm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, &drm_if->cursor,
+	ret = drmm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, NULL,
 					 &fl2000_crtc_funcs, NULL);
 	if (ret) {
 		drm_err(drm, "Cannot initialize CRTC (%d)\n", ret);
@@ -917,7 +822,6 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	}
 	drm_crtc_helper_add(&drm_if->crtc, &fl2000_crtc_helper_funcs);
 	drm_if->plane.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
-	drm_if->cursor.possible_crtcs = drm_crtc_mask(&drm_if->crtc);
 
 	/* The FL2000 is programmed from the CRTC; the IT66121 bridge hangs off this encoder */
 	ret = drmm_encoder_init(drm, &drm_if->encoder, NULL, DRM_MODE_ENCODER_NONE, NULL);

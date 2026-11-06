@@ -44,5 +44,5 @@ driver crashes in all three.
 
 fl2000-t.c drives the DRM device: atomic commits with a pattern in the framebuffer,
 which verify_frame.py compares with the frame that reached the endpoint, including the
-word swap; a mode that would overflow the buffer size; cursor moves; commits while the
+word swap; a mode that would overflow the buffer size; commits while the
 device goes away; allocation failures through /proc/thread-self/fail-nth.
