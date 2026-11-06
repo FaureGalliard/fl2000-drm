@@ -86,8 +86,8 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 }
 
 /*
- * Monitor DDC on the FL2000 bus. The bridge's own EDID FIFO does not work on the tested boards, and
- * the VGA connector has no bridge at all, so EDID is read with the FL2000 I2C engine at address
+ * Monitor DDC on the FL2000 bus. The bridge's own EDID command does not work behind this engine,
+ * and the VGA connector has no bridge at all, so EDID is read with the FL2000 I2C engine at address
  * 0x50, 4 bytes per operation with an 8-bit offset, which covers EDID blocks 0 and 1.
  */
 #define FL2000_DDC_ADDR 0x50

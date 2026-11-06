@@ -15,9 +15,6 @@
 #include "fl2000_it66121.h"
 #include "fl2000_it66121_regs.h"
 
-/* HW defect leading to losing 3 first bytes during EDID read operation */
-#define EDID_LOSS_LEN 3
-
 #define VENDOR_ID      0x4954
 #define DEVICE_ID      0x0612
 #define REVISION_MASK  0xF000
@@ -38,10 +35,8 @@ struct it66121_priv {
 	struct delayed_work work;
 	struct workqueue_struct *work_queue;
 
-	/* Serializes users of the DDC engine (multi-step EDID FIFO reads) */
-	struct mutex ddc_lock;
-	/* The EDID is read through the FL2000 bus, not the IT66121 FIFO, on this board */
-	bool edid_direct;
+	/* The chip was reset and its HDCP engine may be holding the DDC bus */
+	bool ddc_held;
 	/* Set when the monitor went away: the cached EDID is no longer valid */
 	bool edid_stale;
 
@@ -99,25 +94,10 @@ static const struct regmap_config it66121_regmap_config = {
  * Poll sparsely: every status read is a transaction on the shared bus that
  * competes with the DDC engine's own transfer.
  */
-#define EDID_SLEEP   5000
-#define EDID_TIMEOUT 500000
+#define DDC_POLL_SLEEP_US   5000
+#define DDC_POLL_TIMEOUT_US 500000
 
-#define EDID_HDCP_ADDR 0x74
-#define EDID_DDC_ADDR  0xA0
-
-#define EDID_FIFO_SIZE 32
-
-enum it66121_ddc_cmd {
-	DDC_CMD_BURST_READ = 0x0,
-	DDC_CMD_LINK_CHECK = 0x2,
-	DDC_CMD_EDID_READ = 0x3,
-	DDC_CMD_ASKV_WRITE = 0x4,
-	DDC_CMD_AINFO_WRITE = 0x5,
-	DDC_CMD_AN_WRITE = 0x6,
-	DDC_CMD_FIFO_CLEAR = 0x9,
-	DDC_CMD_SCL_PULSE = 0xA,
-	DDC_CMD_ABORT = 0xF,
-};
+#define DDC_CMD_ABORT 0xF
 
 static int it66121_configure_input(struct it66121_priv *priv)
 {
@@ -190,14 +170,12 @@ static int it66121_configure_afe(struct it66121_priv *priv, int clock_khz)
 }
 
 /* DDC status bits: done (7), active (6), noack/wait bus/arbitration lose (5:3) */
-#define DDC_STATUS_TX_DONE    BIT(7)
-#define DDC_STATUS_ACTIVE     BIT(6)
-#define DDC_STATUS_ERROR_MASK GENMASK(5, 3)
+#define DDC_STATUS_TX_DONE BIT(7)
 
 static int it66121_wait_ddc_ready(struct it66121_priv *priv)
 {
+	unsigned int val = 0;
 	int ret;
-	unsigned int val;
 
 	/*
 	 * Wait for completion only. On this hardware the FL2000 I2C master and
@@ -207,52 +185,30 @@ static int it66121_wait_ddc_ready(struct it66121_priv *priv)
 	 * terminal signal is TX_DONE (or the timeout).
 	 */
 	ret = regmap_read_poll_timeout(priv->regmap, IT66121_DDC_STATUS, val,
-				       val & DDC_STATUS_TX_DONE, EDID_SLEEP, EDID_TIMEOUT);
-	if (ret) {
-		dev_err(&priv->client->dev, "DDC not done (%d), status 0x%02X\n", ret, val);
-		return ret;
-	}
+				       val & DDC_STATUS_TX_DONE, DDC_POLL_SLEEP_US,
+				       DDC_POLL_TIMEOUT_US);
+	if (ret)
+		dev_dbg(&priv->client->dev, "DDC not done (%d), status 0x%02X\n", ret, val);
 
-	return 0;
+	return ret;
 }
 
-static int it66121_clear_ddc_fifo(struct it66121_priv *priv)
+/*
+ * The HDCP engine shares the DDC master and holds the bus after chip reset (DDC status reports
+ * 'wait bus' + 'arbitration lose', 0x1A), and that bus is the one the monitor's DDC is on. Follow
+ * the ITE reference sequence, as the ite-it66121 driver does: clear HDCP CP_DESIRE, reset the HDCP
+ * engine and re-select the host as DDC master before issuing the abort command.
+ */
+static int it66121_release_ddc(struct it66121_priv *priv)
 {
 	int ret;
 
-	ret = regmap_write(priv->regmap, IT66121_DDC_COMMAND, DDC_CMD_FIFO_CLEAR);
+	ret = regmap_write_bits(priv->regmap, IT66121_HDCP_CONTROL, IT66121_HDCP_CP_DESIRE, 0);
 	if (ret)
 		return ret;
 
-	return 0;
-}
-
-static int it66121_abort_ddc_ops(struct it66121_priv *priv)
-{
-	int ret;
-	unsigned int swreset, cpdesire;
-
-	/*
-	 * The HDCP engine shares the DDC master and holds the bus after chip
-	 * reset (DDC status reports 'wait bus' + 'arbitration lose', 0x1A).
-	 * Follow the ITE reference sequence, as the ite-it66121 driver does:
-	 * clear HDCP CP_DESIRE, reset the HDCP engine and re-select the host as
-	 * DDC master before issuing the abort command.
-	 */
-	ret = regmap_read(priv->regmap, IT66121_SW_RST, &swreset);
-	if (ret)
-		return ret;
-
-	ret = regmap_read(priv->regmap, IT66121_HDCP_CONTROL, &cpdesire);
-	if (ret)
-		return ret;
-
-	ret = regmap_write(priv->regmap, IT66121_HDCP_CONTROL,
-			   cpdesire & ~IT66121_HDCP_CP_DESIRE);
-	if (ret)
-		return ret;
-
-	ret = regmap_write(priv->regmap, IT66121_SW_RST, swreset | IT66121_SW_HDCP_RST);
+	ret = regmap_write_bits(priv->regmap, IT66121_SW_RST, IT66121_SW_HDCP_RST,
+				IT66121_SW_HDCP_RST);
 	if (ret)
 		return ret;
 
@@ -330,150 +286,38 @@ static void it66121_intr_work(struct work_struct *work_item)
 }
 
 /*
- * EDID read through the IT66121 DDC master (EDID FIFO command), for boards
- * where the monitor's DDC lines are wired to the IT66121.
+ * The EDID is read with the FL2000's own I2C engine. On the Fresco reference designs the monitor's
+ * DDC lines hang off the FL2000 I2C bus and the vendor driver reads the EDID at address 0x50 this
+ * way. The IT66121's own EDID command cannot be used: it never completes on these boards, and
+ * could not work behind this I2C engine anyway, which transfers aligned dwords: every read of the
+ * DDC status register (0x16) also reads, and so pops, the DDC FIFO (0x17).
  */
-static int it66121_do_get_edid_block(struct it66121_priv *priv, u8 *buf, unsigned int block,
-				     size_t len)
-{
-	int ret;
-	size_t remain = len;
-	unsigned int val;
-	unsigned int segment = block >> 1;
-	unsigned int offset = (block & 1) ? 128 : 0;
-	static const u8 header[EDID_LOSS_LEN] = { 0x00, 0xFF, 0xFF };
-
-	/* Abort any ongoing DDC operation */
-	ret = it66121_abort_ddc_ops(priv);
-	if (ret)
-		return ret;
-
-	/*
-	 * Statically fill first 3 bytes (due to EDID reading HW bug they are
-	 * lost, but they are constant in any valid EDID header).
-	 */
-	while (offset < EDID_LOSS_LEN && remain > 0) {
-		*(buf++) = header[offset];
-		remain--;
-		offset++;
-	}
-
-	while (remain > 0) {
-		/* Add bytes that will be lost during EDID read */
-		size_t size = remain + EDID_LOSS_LEN;
-
-		/* ... and check size fits FIFO */
-		size = min_t(size_t, size, EDID_FIFO_SIZE);
-
-		ret = it66121_clear_ddc_fifo(priv);
-		if (ret)
-			return ret;
-
-		ret = regmap_write(priv->regmap, IT66121_DDC_ADDRESS, EDID_DDC_ADDR);
-		if (ret)
-			return ret;
-
-		/* Account 3 bytes that will be lost */
-		ret = regmap_write(priv->regmap, IT66121_DDC_OFFSET, offset - EDID_LOSS_LEN);
-		if (ret)
-			return ret;
-
-		ret = regmap_write(priv->regmap, IT66121_DDC_SIZE, (unsigned int)size);
-		if (ret)
-			return ret;
-
-		ret = regmap_write(priv->regmap, IT66121_DDC_SEGMENT, segment);
-		if (ret)
-			return ret;
-
-		ret = regmap_write(priv->regmap, IT66121_DDC_COMMAND, DDC_CMD_EDID_READ);
-		if (ret)
-			return ret;
-
-		ret = it66121_wait_ddc_ready(priv);
-		if (ret) {
-			it66121_abort_ddc_ops(priv);
-			return ret;
-		}
-
-		/* Deduct lost bytes when reading from FIFO */
-		size -= EDID_LOSS_LEN;
-
-		for (size_t i = 0; i < size; i++) {
-			ret = regmap_read(priv->regmap, IT66121_DDC_RD_FIFO, &val);
-			if (ret)
-				return ret;
-
-			*(buf++) = val & 0xFF;
-		}
-
-		remain -= size;
-		offset += size;
-	}
-
-	return 0;
-}
-
 static int it66121_get_edid_block(void *context, u8 *buf, unsigned int block, size_t len)
-{
-	struct it66121_priv *priv = context;
-	int ret;
-
-	mutex_lock(&priv->ddc_lock);
-	ret = it66121_do_get_edid_block(priv, buf, block, len);
-	mutex_unlock(&priv->ddc_lock);
-
-	if (ret)
-		dev_dbg(&priv->client->dev, "EDID block %u read failed (%d)\n", block, ret);
-
-	return ret;
-}
-
-/*
- * Fallback EDID path: on Fresco reference designs the monitor's DDC lines hang
- * directly off the FL2000 I2C bus, and the vendor driver reads EDID at address
- * 0x50 with the FL2000's own dword I2C engine, bypassing the IT66121 DDC
- * master entirely. The engine reads 4 bytes per operation with an 8-bit
- * offset, which covers EDID blocks 0 and 1.
- */
-static int it66121_get_edid_block_direct(void *context, u8 *buf, unsigned int block, size_t len)
 {
 	struct it66121_priv *priv = context;
 	int ret;
 
 	ret = fl2000_ddc_read_block(priv->adapter, buf, block, len);
 	if (ret)
-		dev_dbg(&priv->client->dev, "Direct EDID block %u read failed (%d)\n", block, ret);
+		dev_dbg(&priv->client->dev, "EDID block %u read failed (%d)\n", block, ret);
 
 	return ret;
 }
 
 static void it66121_read_edid(struct it66121_priv *priv, struct drm_connector *connector)
 {
-	int (*first)(void *context, u8 *buf, unsigned int block, size_t len);
-	int (*second)(void *context, u8 *buf, unsigned int block, size_t len);
+	int ret;
 
-	/*
-	 * Board wirings differ: try the direct FL2000-bus DDC read if the
-	 * IT66121 EDID FIFO path did not work, and start with whichever worked
-	 * last time so the FIFO path's timeouts are paid once.
-	 */
-	if (priv->edid_direct) {
-		first = it66121_get_edid_block_direct;
-		second = it66121_get_edid_block;
-	} else {
-		first = it66121_get_edid_block;
-		second = it66121_get_edid_block_direct;
+	if (priv->ddc_held) {
+		/* Not fatal: the read tells whether the bus is free */
+		ret = it66121_release_ddc(priv);
+		if (ret)
+			dev_dbg(&priv->client->dev, "Cannot release the DDC bus (%d)\n", ret);
+		priv->ddc_held = false;
 	}
 
 	drm_edid_free(priv->drm_edid);
-	priv->drm_edid = drm_edid_read_custom(connector, first, priv);
-	if (!priv->drm_edid) {
-		dev_dbg(&priv->client->dev, "EDID read failed, trying the other DDC path\n");
-		priv->drm_edid = drm_edid_read_custom(connector, second, priv);
-		if (priv->drm_edid)
-			priv->edid_direct = !priv->edid_direct;
-	}
+	priv->drm_edid = drm_edid_read_custom(connector, it66121_get_edid_block, priv);
 }
 
 static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge,
@@ -602,6 +446,8 @@ static void it66121_init_chip(struct it66121_priv *priv)
 	/* We do not support HDCP so its ok to statically set host controls */
 	regmap_write(priv->regmap, IT66121_DDC_CONTROL,
 		     IT66121_DDC_MASTER_DDC | IT66121_DDC_MASTER_HOST);
+
+	priv->ddc_held = true;
 }
 
 /* Unmask the DDC interrupt and start acknowledging the chip's interrupts */
@@ -1008,7 +854,6 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 	}
 
 	INIT_DELAYED_WORK(&priv->work, &it66121_intr_work);
-	mutex_init(&priv->ddc_lock);
 
 	/*
 	 * The chip's interrupt reaches the host only through the FL2000's, which sends a hotplug
