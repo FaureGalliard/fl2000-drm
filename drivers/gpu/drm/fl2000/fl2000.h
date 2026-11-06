@@ -114,6 +114,7 @@ void fl2000_intr_quiesce(struct fl2000_intr *intr);
 void fl2000_intr_suspend(struct fl2000_intr *intr);
 int fl2000_intr_resume(struct fl2000_intr *intr);
 int fl2000_intr_monitor_connected(struct fl2000_intr *intr);
+bool fl2000_intr_sink_changed(struct fl2000_intr *intr);
 void fl2000_intr_destroy(struct usb_device *usb_dev);
 
 /* VGA output: a DAC encoder and connector next to the HDMI ones, on the same CRTC */
@@ -161,7 +162,7 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 /* DRM device creation */
 int fl2000_drm_bind(struct device *master);
 void fl2000_drm_unbind(struct device *master);
-void fl2000_drm_hotplug(struct drm_device *drm, u32 events);
+void fl2000_drm_hotplug(struct drm_device *drm);
 int fl2000_drm_suspend(struct device *master);
 int fl2000_drm_resume(struct device *master);
 

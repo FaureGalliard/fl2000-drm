@@ -637,11 +637,10 @@ static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = 
 /**
  * fl2000_drm_hotplug() - tell userspace that a monitor came, went or changed
  * @drm: DRM device
- * @events: the sink event bits of the status register that were seen
  *
  * Called from the interrupt work.
  */
-void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
+void fl2000_drm_hotplug(struct drm_device *drm)
 {
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
 	int idx;
@@ -649,9 +648,6 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 	/* The device sends uevents only once it has been registered */
 	if (!smp_load_acquire(&drm_if->registered) || !drm_dev_enter(drm, &idx))
 		return;
-
-	if (events & (FL2000_VGA_STATUS_MONITOR_EVENT | FL2000_VGA_STATUS_EDID_EVENT))
-		fl2000_vga_sink_event(&drm_if->vga);
 
 	drm_kms_helper_hotplug_event(drm);
 

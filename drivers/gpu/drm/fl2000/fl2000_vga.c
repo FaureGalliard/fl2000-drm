@@ -109,7 +109,7 @@ static int fl2000_vga_get_modes(struct drm_connector *connector)
 	if (!drm_dev_enter(connector->dev, &idx))
 		return 0;
 
-	if (READ_ONCE(vga->edid_stale)) {
+	if (fl2000_intr_sink_changed(vga->intr) || READ_ONCE(vga->edid_stale)) {
 		WRITE_ONCE(vga->edid_stale, false);
 		drm_edid_free(vga->edid);
 		vga->edid = NULL;
@@ -175,10 +175,10 @@ static const struct drm_encoder_helper_funcs fl2000_vga_encoder_helper_funcs = {
 };
 
 /**
- * fl2000_vga_sink_event() - the chip reports that a monitor appeared, went away or changed EDID
+ * fl2000_vga_sink_event() - a monitor may have appeared, gone away or changed EDID
  * @vga: VGA output
  *
- * Called from the interrupt work. The EDID is read again by the next probe.
+ * Called after system sleep. The EDID is read again by the next probe.
  */
 void fl2000_vga_sink_event(struct fl2000_vga *vga)
 {

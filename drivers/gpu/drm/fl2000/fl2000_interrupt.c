@@ -11,7 +11,6 @@
 struct fl2000_intr {
 	struct usb_device *usb_dev;
 	struct drm_device *drm;
-	u8 poll_interval;
 	struct urb *urb;
 	u8 *buf;
 	dma_addr_t transfer_dma;
@@ -19,6 +18,8 @@ struct fl2000_intr {
 	struct workqueue_struct *work_queue;
 	/* Sink events read by anyone, not yet reported to userspace */
 	atomic_t events;
+	/* Read by anyone since the last call of fl2000_intr_sink_changed(): the monitor changed */
+	atomic_t sink_changed;
 };
 
 #define FL2000_SINK_EVENTS (FL2000_VGA_STATUS_HDMI_EVENT | FL2000_VGA_STATUS_MONITOR_EVENT | \
@@ -33,10 +34,28 @@ static int fl2000_intr_read_status(struct fl2000_intr *intr, u32 *status)
 	int ret;
 
 	ret = fl2000_read_status(intr->usb_dev, status);
-	if (!ret)
-		atomic_or(*status & FL2000_SINK_EVENTS, &intr->events);
+	if (ret)
+		return ret;
 
-	return ret;
+	atomic_or(*status & FL2000_SINK_EVENTS, &intr->events);
+	if (*status & (FL2000_VGA_STATUS_MONITOR_EVENT | FL2000_VGA_STATUS_EDID_EVENT))
+		atomic_set(&intr->sink_changed, 1);
+
+	return 0;
+}
+
+/**
+ * fl2000_intr_sink_changed() - has the chip reported a monitor change since the last call
+ * @intr: interrupt context
+ *
+ * Asked whenever the EDID is about to be used. The answer does not depend on who read the status
+ * first: the connector detection, or the interrupt work and whether userspace was there yet.
+ *
+ * Return: true if the EDID must be read again
+ */
+bool fl2000_intr_sink_changed(struct fl2000_intr *intr)
+{
+	return atomic_xchg(&intr->sink_changed, 0);
 }
 
 /**
@@ -62,15 +81,14 @@ int fl2000_intr_monitor_connected(struct fl2000_intr *intr)
 
 static void fl2000_intr_work(struct work_struct *work)
 {
-	u32 status, events;
+	u32 status;
 	struct fl2000_intr *intr = container_of(work, struct fl2000_intr, work);
 
 	if (fl2000_intr_read_status(intr, &status))
 		return;
 
-	events = atomic_xchg(&intr->events, 0);
-	if (events)
-		fl2000_drm_hotplug(intr->drm, events);
+	if (atomic_xchg(&intr->events, 0))
+		fl2000_drm_hotplug(intr->drm);
 }
 
 static void fl2000_intr_release(struct device *dev, void *res)
@@ -95,7 +113,7 @@ static void fl2000_intr_completion(struct urb *urb)
 	ret = fl2000_urb_status(usb_dev, urb->status);
 	if (ret) {
 		/* Killed on purpose (suspend, unplug) is no reason to complain */
-		if (ret != -ENOENT && ret != -ECONNRESET)
+		if (ret != -ENOENT && ret != -ECONNRESET && ret != -ESHUTDOWN)
 			dev_err(&usb_dev->dev, "Stopping interrupts\n");
 		return;
 	}
@@ -103,16 +121,9 @@ static void fl2000_intr_completion(struct urb *urb)
 	/* Processing reads registers over USB, which sleeps: defer it to a work item */
 	queue_work(intr->work_queue, &intr->work);
 
-	/*
-	 * For interrupt URBs, as part of successful URB submission urb->interval is modified to
-	 * reflect the actual transfer period used, so we need to restore it.
-	 */
-	urb->interval = intr->poll_interval;
-	urb->start_frame = -1;
-
-	/* Restart urb */
+	/* Restart urb. It may be getting poisoned, or the device may have just gone. */
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
-	if (ret)
+	if (ret && ret != -EPERM && ret != -ENODEV)
 		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
 }
 
@@ -147,11 +158,11 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 		return ERR_PTR(-ENOMEM);
 	devres_add(&usb_dev->dev, intr);
 
-	intr->poll_interval = desc->bInterval;
 	intr->usb_dev = usb_dev;
 	intr->drm = drm;
 	INIT_WORK(&intr->work, &fl2000_intr_work);
 	atomic_set(&intr->events, 0);
+	atomic_set(&intr->sink_changed, 0);
 
 	intr->urb = usb_alloc_urb(0, GFP_KERNEL);
 	if (!intr->urb) {
@@ -172,8 +183,8 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	}
 
 	/* Interrupt URB configuration is static, including allocated buffer */
-	usb_fill_int_urb(intr->urb, usb_dev, usb_rcvintpipe(usb_dev, 3), intr->buf, INTR_BUFSIZE,
-			 fl2000_intr_completion, intr, intr->poll_interval);
+	usb_fill_int_urb(intr->urb, usb_dev, usb_rcvintpipe(usb_dev, usb_endpoint_num(desc)),
+			 intr->buf, INTR_BUFSIZE, fl2000_intr_completion, intr, desc->bInterval);
 	intr->urb->transfer_dma = intr->transfer_dma;
 	intr->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
