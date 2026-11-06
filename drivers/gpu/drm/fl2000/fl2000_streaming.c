@@ -194,11 +194,11 @@ static struct fl2000_stream_buf *fl2000_alloc_sb(unsigned int size)
 	if (!sb)
 		return NULL;
 
-	sb->nr_pages = nr_pages;
-
 	sb->pages = kzalloc_objs(*sb->pages, nr_pages);
 	if (!sb->pages)
 		goto error;
+
+	sb->nr_pages = nr_pages;
 
 	for (int i = 0; i < nr_pages; i++) {
 		sb->pages[i] = alloc_page(GFP_KERNEL);
