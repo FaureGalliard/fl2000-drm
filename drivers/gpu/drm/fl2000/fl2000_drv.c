@@ -31,6 +31,8 @@ struct fl2000_devs {
 	struct i2c_client *bridge_client;
 	struct component_match *match;
 	int active_if;
+	/* The display was stopped for system sleep and has not been restarted yet */
+	bool suspended;
 };
 
 static const struct component_master_ops fl2000_master_ops = {
@@ -222,15 +224,27 @@ static void fl2000_disconnect(struct usb_interface *interface)
 	}
 }
 
+/*
+ * System sleep. The USB core suspends the interfaces one by one, the last first, and resumes them
+ * in order once the device is awake. The display is one thing for all three: stop it at the first
+ * suspend, before any interface sleeps, and start it again at the first resume. The same callback
+ * serves a reset-resume, after which the chips are set up from scratch: without one the USB core
+ * would unbind and bind the driver again, which a running compositor sees as an unplug.
+ */
 static int fl2000_suspend(struct usb_interface *interface, pm_message_t message)
 {
 	struct usb_device *usb_dev = interface_to_usbdev(interface);
+	struct fl2000_devs *devs = dev_get_drvdata(&usb_dev->dev);
+	int ret;
 
-	/*
-	 * Nothing to save yet. Providing the callback keeps the USB core from
-	 * unbinding the driver across system sleep.
-	 */
-	dev_dbg(&usb_dev->dev, "suspend\n");
+	if (!devs || devs->suspended)
+		return 0;
+
+	ret = fl2000_drm_suspend(&devs->adapter->dev);
+	if (ret)
+		return ret;
+
+	devs->suspended = true;
 
 	return 0;
 }
@@ -238,10 +252,14 @@ static int fl2000_suspend(struct usb_interface *interface, pm_message_t message)
 static int fl2000_resume(struct usb_interface *interface)
 {
 	struct usb_device *usb_dev = interface_to_usbdev(interface);
+	struct fl2000_devs *devs = dev_get_drvdata(&usb_dev->dev);
 
-	dev_dbg(&usb_dev->dev, "resume\n");
+	if (!devs || !devs->suspended)
+		return 0;
 
-	return 0;
+	devs->suspended = false;
+
+	return fl2000_drm_resume(&devs->adapter->dev);
 }
 
 static struct usb_driver fl2000_driver = {
@@ -250,6 +268,7 @@ static struct usb_driver fl2000_driver = {
 	.disconnect = fl2000_disconnect,
 	.suspend = fl2000_suspend,
 	.resume = fl2000_resume,
+	.reset_resume = fl2000_resume,
 	.id_table = fl2000_id_table,
 	.supports_autosuspend = false,
 	.disable_hub_initiated_lpm = true,

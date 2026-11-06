@@ -11,10 +11,12 @@
 #include <drm/drm_connector.h>
 #include <drm/drm_fbdev_shmem.h>
 #include <drm/drm_gem_atomic_helper.h>
+#include <drm/drm_modeset_helper.h>
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_vblank_helper.h>
 
 #include "fl2000.h"
+#include "fl2000_it66121.h"
 
 #define DRM_DRIVER_NAME "fl2000"
 #define DRM_DRIVER_DESC "Fresco Logic FL2000 USB display"
@@ -675,6 +677,98 @@ static void fl2000_drm_if_release(struct device *dev, void *res)
 	 * adapter, so the disconnect does not wait for userspace.
 	 */
 	drm_dev_put(drm);
+}
+
+/* The DRM device while the master is bound, NULL otherwise */
+static struct fl2000_drm_if *fl2000_drm_if_of(struct device *master)
+{
+	struct fl2000_drm_if **holder = devres_find(master, fl2000_drm_if_release, NULL, NULL);
+
+	return holder ? *holder : NULL;
+}
+
+/**
+ * fl2000_drm_suspend() - stop the display for system sleep
+ * @master: the component master
+ *
+ * Called once for the device, before any of its interfaces is suspended.
+ *
+ * Return: 0 on success, a negative error code otherwise, which aborts the sleep
+ */
+int fl2000_drm_suspend(struct device *master)
+{
+	struct fl2000_drm_if *drm_if = fl2000_drm_if_of(master);
+	struct drm_bridge *bridge;
+	int ret;
+
+	if (!drm_if)
+		return 0;
+
+	/* No hotplug events while going to sleep */
+	fl2000_intr_suspend(drm_if->intr);
+
+	/* Saves the state, turns the outputs off and stops the stream */
+	ret = drm_mode_config_helper_suspend(&drm_if->drm);
+	if (ret) {
+		fl2000_intr_resume(drm_if->intr);
+		return ret;
+	}
+
+	bridge = drm_bridge_chain_get_first_bridge(&drm_if->encoder);
+	if (bridge) {
+		it66121_suspend(bridge);
+		drm_bridge_put(bridge);
+	}
+
+	return 0;
+}
+
+/**
+ * fl2000_drm_resume() - bring the display back after system sleep
+ * @master: the component master
+ *
+ * Called once for the device, when all of it is awake again, also after a reset-resume. The chips
+ * may have lost power: they are set up as at bind time before the saved state is restored.
+ *
+ * Return: 0 on success, a negative error code otherwise
+ */
+int fl2000_drm_resume(struct device *master)
+{
+	struct fl2000_drm_if *drm_if = fl2000_drm_if_of(master);
+	struct usb_device *usb_dev;
+	struct drm_bridge *bridge;
+	int ret;
+
+	if (!drm_if)
+		return 0;
+	usb_dev = drm_if->usb_dev;
+
+	/* First, as the IT66121 is reached through the FL2000 I2C engine */
+	fl2000_regmap_drop_cache(usb_dev);
+
+	bridge = drm_bridge_chain_get_first_bridge(&drm_if->encoder);
+	if (bridge) {
+		it66121_resume(bridge);
+		drm_bridge_put(bridge);
+	}
+
+	/* The same order as in fl2000_drm_bind() */
+	fl2000_reset(usb_dev);
+	fl2000_usb_magic(usb_dev);
+
+	/* Without interrupts the connectors are still polled */
+	fl2000_intr_resume(drm_if->intr);
+
+	/* Another monitor may have been plugged in meanwhile */
+	fl2000_vga_sink_event(&drm_if->vga);
+
+	ret = drm_mode_config_helper_resume(&drm_if->drm);
+	if (ret)
+		drm_err(&drm_if->drm, "Cannot restore the display after sleep (%d)\n", ret);
+
+	drm_kms_helper_hotplug_event(&drm_if->drm);
+
+	return ret;
 }
 
 int fl2000_drm_bind(struct device *master)

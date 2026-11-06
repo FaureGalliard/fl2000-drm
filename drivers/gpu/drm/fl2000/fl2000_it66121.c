@@ -552,22 +552,12 @@ static const struct component_ops it66121_component_ops = {
 	.unbind = it66121_unbind,
 };
 
-static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
-				 enum drm_bridge_attach_flags flags)
+/*
+ * Bring the transmitter out of reset into a known state, as the IT66121 manual and the vendor
+ * driver do: at attach, and again after system sleep, which may have cut the power.
+ */
+static void it66121_init_chip(struct it66121_priv *priv)
 {
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	/* The connector is the display driver's (drm_bridge_connector_init()) */
-	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
-		drm_err(bridge->dev, "The IT66121 bridge does not create a connector\n");
-		return -EINVAL;
-	}
-
-	if (!bridge->encoder) {
-		drm_err(bridge->dev, "Parent encoder object not found\n");
-		return -ENODEV;
-	}
-
 	/* Reset according to IT66121 manual */
 	regmap_write_bits(priv->regmap, IT66121_SW_RST, IT66121_SW_REF_RST_HDMITX,
 			  IT66121_SW_REF_RST_HDMITX);
@@ -608,10 +598,34 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	/* We do not support HDCP so its ok to statically set host controls */
 	regmap_write(priv->regmap, IT66121_DDC_CONTROL,
 		     IT66121_DDC_MASTER_DDC | IT66121_DDC_MASTER_HOST);
+}
 
-	/* Start interrupts */
+/* Unmask the DDC interrupt and start acknowledging the chip's interrupts */
+static void it66121_start_interrupts(struct it66121_priv *priv)
+{
 	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC, 0);
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
+}
+
+static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
+				 enum drm_bridge_attach_flags flags)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+
+	/* The connector is the display driver's (drm_bridge_connector_init()) */
+	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
+		drm_err(bridge->dev, "The IT66121 bridge does not create a connector\n");
+		return -EINVAL;
+	}
+
+	if (!bridge->encoder) {
+		drm_err(bridge->dev, "Parent encoder object not found\n");
+		return -ENODEV;
+	}
+
+	it66121_init_chip(priv);
+
+	it66121_start_interrupts(priv);
 
 	drm_dbg_kms(bridge->dev, "Bridge attached\n");
 
@@ -627,6 +641,40 @@ static void it66121_bridge_detach(struct drm_bridge *bridge)
 	 * bridge that is no longer attached to a DRM device.
 	 */
 	cancel_delayed_work_sync(&priv->work);
+}
+
+/**
+ * it66121_suspend() - stop talking to the IT66121 before system sleep
+ * @bridge: the IT66121 bridge
+ *
+ * Its interrupt polling would fail while the USB device sleeps, and a failed read ends it.
+ */
+void it66121_suspend(struct drm_bridge *bridge)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+
+	cancel_delayed_work_sync(&priv->work);
+}
+
+/**
+ * it66121_resume() - set the IT66121 up again after system sleep
+ * @bridge: the IT66121 bridge
+ *
+ * The dongle is bus powered, and the test laptop resets its USB devices when it wakes from
+ * suspend to RAM: the chip may have lost every register. The register cache would then be wrong,
+ * and the read-modify-write updates of the initialisation would skip writes the chip still needs:
+ * drop it, so that values are read from the chip again. The mode is set again by the DRM core.
+ */
+void it66121_resume(struct drm_bridge *bridge)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+
+	regcache_drop_region(priv->regmap, 0, it66121_regmap_config.max_register);
+	it66121_init_chip(priv);
+	it66121_start_interrupts(priv);
+
+	/* Another monitor may have been plugged in meanwhile */
+	WRITE_ONCE(priv->edid_stale, true);
 }
 
 /*

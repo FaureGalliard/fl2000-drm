@@ -67,6 +67,34 @@ d2 = cut(d2, '\t/*\n\t * The IT66121 bridge component is intentionally NOT destr
          '\t * a devres of the usb_device, see fl2000_bridge_create().\n'
          '\t */\n')
 d2 = cut(d2, '#define FL2000_ALL_IFS \\', 'static const struct usb_device_id')
+# no DRM device to suspend yet: the callbacks only keep the driver bound across sleep
+d2 = cut(d2, '\t/* The display was stopped for system sleep and has not been restarted yet */\n'
+         '\tbool suspended;\n')
+d2 = cut(d2, '/*\n * System sleep. The USB core suspends the interfaces one by one',
+         'static struct usb_driver fl2000_driver = {',
+         'static int fl2000_suspend(struct usb_interface *interface, pm_message_t message)\n'
+         '{\n'
+         '\tstruct usb_device *usb_dev = interface_to_usbdev(interface);\n'
+         '\n'
+         '\t/*\n'
+         '\t * Nothing to save yet. Providing the callback keeps the USB core from\n'
+         '\t * unbinding the driver across system sleep.\n'
+         '\t */\n'
+         '\tdev_dbg(&usb_dev->dev, "suspend\\n");\n'
+         '\n'
+         '\treturn 0;\n'
+         '}\n'
+         '\n'
+         'static int fl2000_resume(struct usb_interface *interface)\n'
+         '{\n'
+         '\tstruct usb_device *usb_dev = interface_to_usbdev(interface);\n'
+         '\n'
+         '\tdev_dbg(&usb_dev->dev, "resume\\n");\n'
+         '\n'
+         '\treturn 0;\n'
+         '}\n'
+         '\n')
+d2 = cut(d2, '\t.reset_resume = fl2000_resume,\n')
 
 # --- fl2000_drv.c, patch 1: no bridge either ---
 d1 = d2

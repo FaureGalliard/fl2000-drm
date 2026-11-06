@@ -10,12 +10,14 @@
  static const struct usb_device_id fl2000_id_table[] = {
  	{ USB_DEVICE_INTERFACE_CLASS(USB_VENDOR_FRESCO_LOGIC, USB_PRODUCT_FL2000, USB_CLASS_AV) },
  	{},
-@@ -29,38 +26,8 @@
+@@ -29,40 +26,8 @@
  	struct regmap *regmap;
  	struct i2c_adapter *adapter;
  	struct i2c_client *bridge_client;
 -	struct component_match *match;
  	int active_if;
+-	/* The display was stopped for system sleep and has not been restarted yet */
+-	bool suspended;
  };
 -
 -static const struct component_master_ops fl2000_master_ops = {
@@ -49,7 +51,7 @@
  
  static struct fl2000_devs *fl2000_get_devices(struct usb_device *usb_dev)
  {
-@@ -81,8 +48,6 @@
+@@ -83,8 +48,6 @@
  		dev_err(&usb_dev->dev, "Cannot initialize I2C adapter (%pe)\n", devs->adapter);
  		return ERR_CAST(devs->adapter);
  	}
@@ -58,7 +60,7 @@
  
  	dev_set_drvdata(&usb_dev->dev, devs);
  
-@@ -173,16 +138,6 @@
+@@ -175,16 +138,6 @@
  		break;
  	}
  
@@ -75,7 +77,7 @@
  	return ret;
  }
  
-@@ -196,18 +151,11 @@
+@@ -198,18 +151,11 @@
  		return;
  
  	/*
@@ -98,3 +100,64 @@
  	switch (iface_num) {
  	case FL2000_USBIF_AVCONTROL:
  	case FL2000_USBIF_STREAMING:
+@@ -224,27 +170,15 @@
+ 	}
+ }
+ 
+-/*
+- * System sleep. The USB core suspends the interfaces one by one, the last first, and resumes them
+- * in order once the device is awake. The display is one thing for all three: stop it at the first
+- * suspend, before any interface sleeps, and start it again at the first resume. The same callback
+- * serves a reset-resume, after which the chips are set up from scratch: without one the USB core
+- * would unbind and bind the driver again, which a running compositor sees as an unplug.
+- */
+ static int fl2000_suspend(struct usb_interface *interface, pm_message_t message)
+ {
+ 	struct usb_device *usb_dev = interface_to_usbdev(interface);
+-	struct fl2000_devs *devs = dev_get_drvdata(&usb_dev->dev);
+-	int ret;
+-
+-	if (!devs || devs->suspended)
+-		return 0;
+-
+-	ret = fl2000_drm_suspend(&devs->adapter->dev);
+-	if (ret)
+-		return ret;
+-
+-	devs->suspended = true;
++
++	/*
++	 * Nothing to save yet. Providing the callback keeps the USB core from
++	 * unbinding the driver across system sleep.
++	 */
++	dev_dbg(&usb_dev->dev, "suspend\n");
+ 
+ 	return 0;
+ }
+@@ -252,14 +186,10 @@
+ static int fl2000_resume(struct usb_interface *interface)
+ {
+ 	struct usb_device *usb_dev = interface_to_usbdev(interface);
+-	struct fl2000_devs *devs = dev_get_drvdata(&usb_dev->dev);
+-
+-	if (!devs || !devs->suspended)
+-		return 0;
+-
+-	devs->suspended = false;
+-
+-	return fl2000_drm_resume(&devs->adapter->dev);
++
++	dev_dbg(&usb_dev->dev, "resume\n");
++
++	return 0;
+ }
+ 
+ static struct usb_driver fl2000_driver = {
+@@ -268,7 +198,6 @@
+ 	.disconnect = fl2000_disconnect,
+ 	.suspend = fl2000_suspend,
+ 	.resume = fl2000_resume,
+-	.reset_resume = fl2000_resume,
+ 	.id_table = fl2000_id_table,
+ 	.supports_autosuspend = false,
+ 	.disable_hub_initiated_lpm = true,

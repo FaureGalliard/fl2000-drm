@@ -297,6 +297,17 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 	return 0;
 }
 
+/*
+ * The chip may have lost power (system sleep): forget the cached registers, so that the
+ * read-modify-write updates that follow read the chip instead of skipping writes it still needs.
+ */
+void fl2000_regmap_drop_cache(struct usb_device *usb_dev)
+{
+	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
+
+	regcache_drop_region(regmap, 0, fl2000_regmap_config.max_register);
+}
+
 struct regmap *fl2000_regmap_init(struct usb_device *usb_dev)
 {
 	struct regmap *regmap;

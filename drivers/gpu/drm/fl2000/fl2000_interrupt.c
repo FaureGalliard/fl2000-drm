@@ -94,7 +94,9 @@ static void fl2000_intr_completion(struct urb *urb)
 
 	ret = fl2000_urb_status(usb_dev, urb->status);
 	if (ret) {
-		dev_err(&usb_dev->dev, "Stopping interrupts\n");
+		/* Killed on purpose (suspend, unplug) is no reason to complain */
+		if (ret != -ENOENT && ret != -ECONNRESET)
+			dev_err(&usb_dev->dev, "Stopping interrupts\n");
 		return;
 	}
 
@@ -198,6 +200,35 @@ void fl2000_intr_quiesce(struct fl2000_intr *intr)
 {
 	usb_poison_urb(intr->urb);
 	cancel_work_sync(&intr->work);
+}
+
+/**
+ * fl2000_intr_suspend() - stop polling the interrupt endpoint for system sleep
+ * @intr: interrupt context
+ *
+ * Unlike fl2000_intr_quiesce(), the URB can be submitted again by fl2000_intr_resume().
+ */
+void fl2000_intr_suspend(struct fl2000_intr *intr)
+{
+	usb_kill_urb(intr->urb);
+	cancel_work_sync(&intr->work);
+}
+
+/**
+ * fl2000_intr_resume() - poll the interrupt endpoint again after system sleep
+ * @intr: interrupt context
+ *
+ * Return: 0 on success, the URB submission error otherwise
+ */
+int fl2000_intr_resume(struct fl2000_intr *intr)
+{
+	int ret;
+
+	ret = usb_submit_urb(intr->urb, GFP_KERNEL);
+	if (ret)
+		dev_err(&intr->usb_dev->dev, "URB submission failed (%d)\n", ret);
+
+	return ret;
 }
 
 void fl2000_intr_destroy(struct usb_device *usb_dev)

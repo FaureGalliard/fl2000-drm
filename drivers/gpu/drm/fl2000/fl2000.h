@@ -135,6 +135,8 @@ void fl2000_stream_disable(struct fl2000_stream *stream);
 struct fl2000_intr;
 struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_device *drm);
 void fl2000_intr_quiesce(struct fl2000_intr *intr);
+void fl2000_intr_suspend(struct fl2000_intr *intr);
+int fl2000_intr_resume(struct fl2000_intr *intr);
 int fl2000_intr_monitor_connected(struct fl2000_intr *intr);
 void fl2000_intr_destroy(struct usb_device *usb_dev);
 
@@ -165,6 +167,7 @@ int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int blo
 
 /* Register map creation */
 struct regmap *fl2000_regmap_init(struct usb_device *usb_dev);
+void fl2000_regmap_drop_cache(struct usb_device *usb_dev);
 
 /* Registers interface */
 int fl2000_reset(struct usb_device *usb_dev);
@@ -183,5 +186,7 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
 int fl2000_drm_bind(struct device *master);
 void fl2000_drm_unbind(struct device *master);
 void fl2000_drm_hotplug(struct drm_device *drm, u32 events);
+int fl2000_drm_suspend(struct device *master);
+int fl2000_drm_resume(struct device *master);
 
 #endif /* FL2000_H */
