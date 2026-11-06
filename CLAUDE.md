@@ -250,7 +250,7 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **1366x768 black on VGA: cause found, fix not yet verified on hardware.**
+7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`); GNOME at 59.79 Hz still shows only the bottom ~10 %, see DEVELOPMENT.md.**
    The frames had no end (see the zero-length URB invariant; commit 627c569),
    and the conversion at that width fell off the streaming-load path (78 ms
    per frame; commit b22b48e). To verify, from a real TTY:

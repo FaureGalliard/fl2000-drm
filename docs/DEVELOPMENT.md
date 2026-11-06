@@ -105,7 +105,11 @@ encoders being clones of each other. Measured on the real adapter with
     nothing followed. The vendor driver sends a separate zero-length URB after
     every frame and no `URB_ZERO_PACKET` (`fl2000_bulk.c`, `fl2000_render.c` in
     github.com/FrescoLogic/FL2000); the driver now does the same (commit
-    627c569). **Not yet verified on hardware.** Every mode whose frame is not a
+    627c569). **Verified on hardware on 5 Nov** (`field-test-19_03.log`): every
+    test mode now runs at one frame per refresh (1366x768 at both clocks 59/60
+    sent/s, 800x600 and 848x480 60), and the colour bars show at 1366x768
+    (both), 1360x768, 800x600 and 1024x768; 848x480 gave 'no signal', which with
+    the device taking its frames normally points at the monitor. Every mode whose frame is not a
     multiple of 1024 bytes was affected at 24 bpp, including 800x600, 848x480,
     1400x1050, 1440x900, 1600x900 and 1680x1050; 1024x768, 1280x720/768/800,
     1360x768 and 1920x1080 are multiples and were not. The line-padding idea
@@ -120,7 +124,13 @@ encoders being clones of each other. Measured on the real adapter with
     pixel clock. `sent/s` well above the refresh rate therefore means the device
     is not seeing frame ends, whatever the monitor shows; the field test prints
     the last `Stream:` line after each test mode for this reason.
-  - **1360x768 is a different problem.** Its frame is a whole number of packets
+  - **Open after the fix: GNOME at 1366x768@59.79 (85.5 MHz)** shows only the
+    bottom ~10 % of the desktop correctly; the rest is a stable black area that
+    distorts when a window is dragged over it, and the monitor's AUTO button
+    does not help. The colour bars at the same mode from modetest looked right,
+    so compare GNOME at 1366x768@60.00 (72 MHz, reduced blanking) and the
+    framebuffer GNOME hands over (pitch, modifier, imported or not) next.
+  - **1360x768 was a different problem.** Its frame is a whole number of packets
     (3060 x 1024), the device ran at one frame per refresh, and the picture was
     still mostly garbled, so the ZLP fix does not change it on the wire. Suspect
     the monitor first: 1360x768 and 1366x768 share htotal 1792, the pixel clock
