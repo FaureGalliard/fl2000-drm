@@ -143,24 +143,10 @@ DEFINE_DRM_GEM_FOPS(fl2000_drm_driver_fops);
  * pipeline is shut down on unbind, so no .release callback is needed.
  */
 static struct drm_driver fl2000_drm_driver = {
-	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
+	.driver_features = DRIVER_ATOMIC | DRIVER_GEM | DRIVER_MODESET,
 	.fops = &fl2000_drm_driver_fops,
 
-	/*
-	 * Paged shmem buffers: the framebuffer is only ever read by the CPU
-	 * (fl2000_stream_compress), never DMA'd to the device, so it does not
-	 * need to be physically contiguous.
-	 */
 	.dumb_create = drm_gem_shmem_dumb_create,
-	/*
-	 * Import with a mapping, not DRM_GEM_SHMEM_DRIVER_OPS' no-map import.
-	 * Mapping the attachment makes the exporter pin the buffer where this
-	 * device can reach it, system memory for amdgpu. Left unmapped, amdgpu
-	 * keeps it in VRAM and vmaps it as one linear range from where it
-	 * thinks it starts, which for a buffer split over several VRAM blocks
-	 * is right for the last block only: at 1360x768 and 1366x768 all but
-	 * the bottom ~10 % of the desktop came out black or garbled.
-	 */
 	.gem_prime_import = drm_gem_prime_import,
 	.gem_prime_import_sg_table = drm_gem_shmem_prime_import_sg_table,
 	DRM_FBDEV_SHMEM_DRIVER_OPS,
@@ -479,8 +465,8 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	if (!drm_dev_enter(drm, &idx))
 		return;
 
-	drm_dbg_kms(drm, "Mode requested:  " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
-	drm_dbg_kms(drm, "Mode configured: " DRM_MODE_FMT "\n", DRM_MODE_ARG(adjusted_mode));
+	drm_dbg(drm, "Mode requested:  " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
+	drm_dbg(drm, "Mode configured: " DRM_MODE_FMT "\n", DRM_MODE_ARG(adjusted_mode));
 
 	/* Prepare timing configuration */
 	timings.hactive = adjusted_mode->hdisplay;
@@ -626,7 +612,7 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 		int ret = it66121_ack_interrupts(drm_if->bridge);
 
 		if (ret)
-			drm_dbg_kms(drm, "Cannot acknowledge IT66121 interrupts (%d)\n", ret);
+			drm_dbg(drm, "Cannot acknowledge IT66121 interrupts (%d)\n", ret);
 	}
 
 	if (!drm_dev_enter(drm, &idx))

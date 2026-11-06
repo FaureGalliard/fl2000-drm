@@ -431,7 +431,7 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 
 	it66121_start_interrupts(priv);
 
-	drm_dbg_kms(bridge->dev, "Bridge attached\n");
+	drm_dbg(bridge->dev, "Bridge attached\n");
 
 	return 0;
 }
@@ -475,7 +475,7 @@ static void it66121_set_mode(struct it66121_priv *priv, struct drm_connector *co
 		IT66121_HDMI_AVIINFO_DB13
 	};
 
-	drm_dbg_kms(bridge->dev, "Setting %s mode " DRM_MODE_FMT "\n", dvi ? "DVI" : "HDMI",
+	drm_dbg(bridge->dev, "Setting %s mode " DRM_MODE_FMT "\n", dvi ? "DVI" : "HDMI",
 		    DRM_MODE_ARG(mode));
 
 	ret = drm_hdmi_avi_infoframe_from_display_mode(&frame, connector, mode);
