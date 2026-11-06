@@ -1,8 +1,12 @@
 drm/fl2000: Add ITE IT66121 HDMI transmitter support
 
 Probe the IT66121 on the FL2000 I2C bus and expose it as a DRM bridge.
-The bridge programs the transmitter (input bus, AFE, AVI infoframe,
-HDMI/DVI mode), reports hotplug state and reads the EDID.
+It attaches with DRM_BRIDGE_ATTACH_NO_CONNECTOR and reports the hot plug
+line and the EDID (DRM_BRIDGE_OP_DETECT and DRM_BRIDGE_OP_EDID), so the
+connector is the display driver's. The transmitter (input bus, AFE, AVI
+infoframe, HDMI/DVI mode) is programmed in atomic_enable, where the
+connector that tells HDMI from DVI is known. The EDID is kept while the
+monitor stays, since reading it over USB takes about a second.
 
 EDID is first read through the IT66121 DDC engine. On the tested
 adapter, as on the Fresco Logic reference design, the monitor's DDC

@@ -7,6 +7,7 @@
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
+#include <drm/drm_bridge_connector.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fbdev_shmem.h>
 #include <drm/drm_gem_atomic_helper.h>
@@ -483,7 +484,7 @@ static void fl2000_crtc_force_connect(struct fl2000_drm_if *drm_if,
 			     crtc_state->encoder_mask & drm_encoder_mask(&drm_if->encoder));
 }
 
-/* Called before the bridge's mode_set: the FL2000 must be clocked first */
+/* Runs before the bridge is enabled: the IT66121 is programmed with the FL2000 clocking it */
 static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct drm_device *drm = crtc->dev;
@@ -794,6 +795,17 @@ int fl2000_drm_bind(struct device *master)
 	}
 
 	/*
+	 * The HDMI connector is the generic one of the bridge chain: the IT66121 attached without
+	 * a connector of its own and reports the hot plug line and the EDID.
+	 */
+	connector = drm_bridge_connector_init(drm, &drm_if->encoder);
+	if (IS_ERR(connector)) {
+		ret = PTR_ERR(connector);
+		drm_err(drm, "Cannot initialize HDMI connector (%d)\n", ret);
+		goto err_unbind;
+	}
+
+	/*
 	 * The VGA output goes in after the bridge: the IT66121 attaches to the first encoder of
 	 * the device, which has to be the HDMI one.
 	 */
@@ -843,7 +855,7 @@ int fl2000_drm_bind(struct device *master)
 	/* From here on the interrupt work may tell userspace about monitors */
 	smp_store_release(&drm_if->registered, true);
 
-	/* Polls the VGA connector: the chip's event for it can be missed */
+	/* Polls both connectors: events can be missed, and HDMI has no hot plug of its own */
 	drm_kms_helper_poll_init(drm);
 
 	/*

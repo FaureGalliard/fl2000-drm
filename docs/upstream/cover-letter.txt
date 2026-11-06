@@ -36,9 +36,13 @@ feedback on before doing the larger reworks:
    while the FL2000 side provides the DDC adapter to a bridge connector,
    or keep the IT66121 handling private to this driver?
 
-2. The bridge still creates its own connector. Converting it to
-   DRM_BRIDGE_ATTACH_NO_CONNECTOR and drm_bridge_connector is planned
-   for v2, but depends on the answer to (1).
+2. Hotplug. The bridge attaches with DRM_BRIDGE_ATTACH_NO_CONNECTOR and
+   the HDMI connector comes from drm_bridge_connector. The bridge
+   reports DETECT and EDID only: the IT66121 interrupt reaches the host
+   through the FL2000 interrupt endpoint, which makes the driver send a
+   hotplug event for the device, so there is no DRM_BRIDGE_OP_HPD and
+   the connector is also polled. Would reporting HPD with
+   drm_bridge_hpd_notify() from that path be preferred?
 
 3. The FL2000 exposes three USB interfaces, and the state they share
    (regmap, I2C adapter, IT66121 client, component match) is kept as

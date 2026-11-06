@@ -30,8 +30,6 @@ struct it66121_priv {
 	struct i2c_client *client;
 	struct regmap *regmap;
 	struct drm_bridge bridge;
-	struct drm_connector connector;
-	enum drm_connector_status conn_status;
 
 	struct delayed_work work;
 	struct workqueue_struct *work_queue;
@@ -47,10 +45,8 @@ struct it66121_priv {
 	struct regmap_field *hpd;
 	struct regmap_field *clr_irq;
 
-	struct hdmi_avi_infoframe hdmi_avi_infoframe;
-
+	/* EDID of the monitor, kept for as long as it stays; NULL if it could not be read */
 	const struct drm_edid *drm_edid;
-	bool dvi_mode;
 };
 
 static const struct regmap_range_cfg it66121_regmap_banks[] = {
@@ -275,27 +271,6 @@ static int it66121_abort_ddc_ops(struct it66121_priv *priv)
 	return 0;
 }
 
-static void it66121_is_hpd_detect(struct it66121_priv *priv)
-{
-	int ret;
-	unsigned int val;
-	/* Do not use bridge.dev here: it is NULL while the bridge is detached */
-	struct device *dev = &priv->client->dev;
-
-	ret = regmap_field_read(priv->hpd, &val);
-	if (ret) {
-		dev_err(dev, "Cannot get monitor status (%d)\n", ret);
-		priv->conn_status = connector_status_unknown;
-	} else {
-		priv->conn_status = val ? connector_status_connected :
-					  connector_status_disconnected;
-	}
-
-	/* Whatever comes next may be another monitor: its EDID must be read again */
-	if (priv->conn_status != connector_status_connected)
-		WRITE_ONCE(priv->edid_stale, true);
-}
-
 /**
  * it66121_hpd_connected() - live state of the HDMI hot plug detect line
  * @bridge: the IT66121 bridge
@@ -497,59 +472,47 @@ static void it66121_read_edid(struct it66121_priv *priv, struct drm_connector *c
 	}
 }
 
-static int it66121_connector_get_modes(struct drm_connector *connector)
+static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge,
+						       struct drm_connector *connector)
 {
-	struct it66121_priv *priv = container_of(connector, struct it66121_priv, connector);
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+	int ret = it66121_hpd_connected(bridge);
 
-	/*
-	 * Reading the EDID takes about a second over USB and every probe from
-	 * userspace gets here with the mode config locked, so keep it until
-	 * the monitor goes away. It must still be handed to the connector on
-	 * every probe: the DRM core drops it when the connector goes through
-	 * 'disconnected'.
-	 */
+	if (ret > 0)
+		return connector_status_connected;
+
+	/* Whatever comes next may be another monitor: its EDID must be read again */
+	WRITE_ONCE(priv->edid_stale, true);
+
+	if (ret < 0) {
+		/* Not bridge->dev: the chip, not the DRM device, failed to answer */
+		dev_err_ratelimited(&priv->client->dev, "Cannot get monitor status (%d)\n", ret);
+		return connector_status_unknown;
+	}
+
+	return connector_status_disconnected;
+}
+
+/*
+ * Reading the EDID takes about a second over USB, and the connector asks for it on every probe,
+ * with the mode config locked: keep it until the monitor goes away (see it66121_bridge_detect())
+ * and hand out copies. It must still be handed over every time: the DRM core drops the
+ * connector's copy when the connector goes through 'disconnected'.
+ */
+static const struct drm_edid *it66121_bridge_edid_read(struct drm_bridge *bridge,
+						       struct drm_connector *connector)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+
 	if (!priv->drm_edid || READ_ONCE(priv->edid_stale)) {
 		WRITE_ONCE(priv->edid_stale, false);
 		it66121_read_edid(priv, connector);
+		if (!priv->drm_edid)
+			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
 	}
 
-	drm_edid_connector_update(connector, priv->drm_edid);
-
-	if (!priv->drm_edid) {
-		dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
-		return 0;
-	}
-
-	dev_dbg(&priv->client->dev, "Monitor is %s\n",
-		connector->display_info.is_hdmi ? "HDMI" : "DVI");
-	priv->dvi_mode = !connector->display_info.is_hdmi;
-
-	return drm_edid_connector_add_modes(connector);
+	return drm_edid_dup(priv->drm_edid);
 }
-
-static const struct drm_connector_helper_funcs it66121_connector_helper_funcs = {
-	.get_modes = it66121_connector_get_modes,
-};
-
-static enum drm_connector_status it66121_connector_detect(struct drm_connector *connector,
-							  bool force)
-{
-	struct it66121_priv *priv = container_of(connector, struct it66121_priv, connector);
-
-	if (force || priv->conn_status == connector_status_unknown)
-		it66121_is_hpd_detect(priv);
-
-	return priv->conn_status;
-}
-
-static const struct drm_connector_funcs it66121_connector_funcs = {
-	.reset = drm_atomic_helper_connector_reset,
-	.detect = it66121_connector_detect,
-	.fill_modes = drm_helper_probe_single_connector_modes,
-	.destroy = drm_connector_cleanup,
-	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
-	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
-};
 
 static int it66121_bind(struct device *comp, struct device *master, void *master_data)
 {
@@ -570,7 +533,8 @@ static int it66121_bind(struct device *comp, struct device *master, void *master
 
 	dev_dbg(comp, "Binding IT66121 component\n");
 
-	ret = drm_bridge_attach(encoder, bridge, NULL, 0);
+	/* The display driver makes the connector, from what the bridge reports */
+	ret = drm_bridge_attach(encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
 	if (ret)
 		dev_err(comp, "Cannot attach IT66121 bridge (%d)\n", ret);
 
@@ -591,12 +555,12 @@ static const struct component_ops it66121_component_ops = {
 static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
 				 enum drm_bridge_attach_flags flags)
 {
-	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
-	if (flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR) {
-		drm_err(bridge->dev, "Need connector for mode configuration\n");
-		return -ENODEV;
+	/* The connector is the display driver's (drm_bridge_connector_init()) */
+	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
+		drm_err(bridge->dev, "The IT66121 bridge does not create a connector\n");
+		return -EINVAL;
 	}
 
 	if (!bridge->encoder) {
@@ -645,21 +609,6 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	regmap_write(priv->regmap, IT66121_DDC_CONTROL,
 		     IT66121_DDC_MASTER_DDC | IT66121_DDC_MASTER_HOST);
 
-	ret = drm_connector_init(bridge->dev, &priv->connector, &it66121_connector_funcs,
-				 DRM_MODE_CONNECTOR_HDMIA);
-	if (ret) {
-		drm_err(bridge->dev, "Cannot initialize bridge connector\n");
-		return ret;
-	}
-
-	drm_connector_helper_add(&priv->connector, &it66121_connector_helper_funcs);
-
-	ret = drm_connector_attach_encoder(&priv->connector, bridge->encoder);
-	if (ret) {
-		drm_err(bridge->dev, "Cannot attach bridge\n");
-		return ret;
-	}
-
 	/* Start interrupts */
 	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC, 0);
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
@@ -680,38 +629,19 @@ static void it66121_bridge_detach(struct drm_bridge *bridge)
 	cancel_delayed_work_sync(&priv->work);
 }
 
-static void it66121_bridge_atomic_enable(struct drm_bridge *bridge,
-					 struct drm_atomic_commit *state)
+/*
+ * Program the transmitter for @mode, as the monitor behind @connector wants it (HDMI, or DVI when
+ * its EDID says so or there is none). The FL2000 already clocks the input at this point.
+ */
+static void it66121_set_mode(struct it66121_priv *priv, struct drm_connector *connector,
+			     const struct drm_display_mode *mode)
 {
-	int ret;
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	/* Unmute AV */
-	ret = regmap_write(priv->regmap, IT66121_HDMI_AV_MUTE, 0);
-	if (ret)
-		return;
-}
-
-static void it66121_bridge_atomic_disable(struct drm_bridge *bridge,
-					  struct drm_atomic_commit *state)
-{
-	int ret;
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	/* Mute AV */
-	ret = regmap_write_bits(priv->regmap, IT66121_HDMI_AV_MUTE, IT66121_HDMI_AV_MUTE_ON,
-				IT66121_HDMI_AV_MUTE_ON);
-	if (ret)
-		return;
-}
-
-static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_display_mode *mode,
-				    const struct drm_display_mode *adjusted_mode)
-{
-	int ret;
+	struct drm_bridge *bridge = &priv->bridge;
+	bool dvi = !connector->display_info.is_hdmi;
+	struct hdmi_avi_infoframe frame;
 	ssize_t frame_size;
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 	u8 buf[HDMI_INFOFRAME_SIZE(AVI)];
+	int ret;
 	const u16 aviinfo_reg[HDMI_AVI_INFOFRAME_SIZE] = {
 		IT66121_HDMI_AVIINFO_DB1,  IT66121_HDMI_AVIINFO_DB2,  IT66121_HDMI_AVIINFO_DB3,
 		IT66121_HDMI_AVIINFO_DB4,  IT66121_HDMI_AVIINFO_DB5,  IT66121_HDMI_AVIINFO_DB6,
@@ -720,17 +650,16 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 		IT66121_HDMI_AVIINFO_DB13
 	};
 
-	drm_dbg_kms(bridge->dev, "Setting AVI infoframe for mode: " DRM_MODE_FMT "\n",
+	drm_dbg_kms(bridge->dev, "Setting %s mode " DRM_MODE_FMT "\n", dvi ? "DVI" : "HDMI",
 		    DRM_MODE_ARG(mode));
 
-	ret = drm_hdmi_avi_infoframe_from_display_mode(&priv->hdmi_avi_infoframe, &priv->connector,
-						       mode);
+	ret = drm_hdmi_avi_infoframe_from_display_mode(&frame, connector, mode);
 	if (ret) {
 		drm_err(bridge->dev, "Cannot create AVI infoframe (%d)\n", ret);
 		return;
 	}
 
-	frame_size = hdmi_avi_infoframe_pack(&priv->hdmi_avi_infoframe, buf, sizeof(buf));
+	frame_size = hdmi_avi_infoframe_pack(&frame, buf, sizeof(buf));
 	if (frame_size < 0) {
 		drm_err(bridge->dev, "Cannot pack AVI infoframe (%zd)\n", frame_size);
 		return;
@@ -738,7 +667,7 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 
 	/* Set TX mode */
 	ret = regmap_write(priv->regmap, IT66121_HDMI_MODE,
-			   priv->dvi_mode ? IT66121_HDMI_MODE_DVI : IT66121_HDMI_MODE_HDMI);
+			   dvi ? IT66121_HDMI_MODE_DVI : IT66121_HDMI_MODE_HDMI);
 	if (ret) {
 		drm_err(bridge->dev, "Cannot set TX mode (%d)\n", ret);
 		return;
@@ -822,6 +751,49 @@ static void it66121_bridge_mode_set(struct drm_bridge *bridge, const struct drm_
 		return;
 }
 
+/*
+ * The mode is programmed here rather than in .mode_set, which has no atomic state: the connector,
+ * which tells HDMI from DVI and goes into the AVI infoframe, is only known from the state.
+ */
+static void it66121_bridge_atomic_enable(struct drm_bridge *bridge,
+					 struct drm_atomic_commit *state)
+{
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+	const struct drm_connector_state *conn_state;
+	const struct drm_crtc_state *crtc_state;
+	struct drm_connector *connector;
+
+	connector = drm_atomic_get_new_connector_for_encoder(state, bridge->encoder);
+	if (WARN_ON(!connector))
+		return;
+
+	conn_state = drm_atomic_get_new_connector_state(state, connector);
+	if (WARN_ON(!conn_state || !conn_state->crtc))
+		return;
+
+	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
+	if (WARN_ON(!crtc_state))
+		return;
+
+	it66121_set_mode(priv, connector, &crtc_state->mode);
+
+	/* Unmute AV */
+	regmap_write(priv->regmap, IT66121_HDMI_AV_MUTE, 0);
+}
+
+static void it66121_bridge_atomic_disable(struct drm_bridge *bridge,
+					  struct drm_atomic_commit *state)
+{
+	int ret;
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+
+	/* Mute AV */
+	ret = regmap_write_bits(priv->regmap, IT66121_HDMI_AV_MUTE, IT66121_HDMI_AV_MUTE_ON,
+				IT66121_HDMI_AV_MUTE_ON);
+	if (ret)
+		return;
+}
+
 static const struct drm_bridge_funcs it66121_bridge_funcs = {
 	.attach = it66121_bridge_attach,
 	.detach = it66121_bridge_detach,
@@ -830,7 +802,8 @@ static const struct drm_bridge_funcs it66121_bridge_funcs = {
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
 	.atomic_enable = it66121_bridge_atomic_enable,
 	.atomic_disable = it66121_bridge_atomic_disable,
-	.mode_set = it66121_bridge_mode_set,
+	.detect = it66121_bridge_detect,
+	.edid_read = it66121_bridge_edid_read,
 };
 
 static int it66121_regs_init(struct it66121_priv *priv, struct i2c_client *client)
@@ -971,9 +944,16 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 		return ERR_PTR(ret);
 	}
 
-	priv->conn_status = connector_status_unknown;
 	INIT_DELAYED_WORK(&priv->work, &it66121_intr_work);
 	mutex_init(&priv->ddc_lock);
+
+	/*
+	 * The chip's interrupt reaches the host only through the FL2000's, which sends a hotplug
+	 * event for the whole device (fl2000_drm_hotplug()). The bridge therefore reports no hot
+	 * plug of its own (DRM_BRIDGE_OP_HPD), and the connector also polls the line.
+	 */
+	priv->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
+	priv->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID;
 
 	drm_bridge_add(&priv->bridge);
 
