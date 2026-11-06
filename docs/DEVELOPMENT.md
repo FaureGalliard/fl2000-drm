@@ -124,7 +124,15 @@ encoders being clones of each other. Measured on the real adapter with
     pixel clock. `sent/s` well above the refresh rate therefore means the device
     is not seeing frame ends, whatever the monitor shows; the field test prints
     the last `Stream:` line after each test mode for this reason.
-  - **Open after the fix: GNOME at 1366x768@59.79 (85.5 MHz)** shows only the
+  - **Fixed (ea3ea23, verified 5 Nov): GNOME at 1360x768 and 1366x768** showed
+    only the bottom ~10 %. `scripts/fl2000-dump-fb.c` proved the compositor's
+    buffer was right (AR30 imported, pitch 5632). With the shmem no-map import
+    amdgpu kept it in VRAM and `ttm_bo_vmap()` mapped one linear range placed
+    to end at its highest VRAM block, so a buffer split over blocks read right
+    only at the end. `drm_gem_prime_import()` maps the attachment, amdgpu pins
+    the buffer in GTT, and the picture is whole: 60 sent/s, 8.7 ms per full
+    frame, still zero-copy. History of the symptom: GNOME at 1366x768@59.79
+    (85.5 MHz) showed only the
     bottom ~10 % of the desktop correctly; the rest is a stable black area that
     distorts when a window is dragged over it, and the monitor's AUTO button
     does not help. The colour bars at the same mode from modetest looked right,

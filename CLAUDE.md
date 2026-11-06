@@ -218,7 +218,7 @@ that). Leave the dongle unplugged ~10 s first and verify with
    `docs/DEVELOPMENT.md`, "VGA output". Tested with the LG 19EN43: the
    connector is `connected` by itself with nothing on HDMI, and GNOME works at
    1024x768, 1280x720, 1280x768 and 1280x800. Still to check: 1366x768 after
-   the frame-end fix (issue 7); unplugging the VGA cable makes it
+   the frame-end fix (issue 7, now working); unplugging the VGA cable makes it
    `disconnected`; the HDMI connector keeps working with an HDMI monitor
    (59.94 Hz 1080p, VGA disconnected). VGA-only adapters without an IT66121
    are not supported.
@@ -256,7 +256,7 @@ that). Leave the dongle unplugged ~10 s first and verify with
    so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
    USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
    needs hardware to decide the right behavior on USB 2.0.
-7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 not yet verified on hardware.**
+7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 verified the same evening: GNOME at 1366x768 whole and correct, still zero-copy (AR30 imported, pitch 5632), 60 sent/s, 8.7 ms per full frame, GTT 94 MB.** Still to check: GTT flat over 30+ min, 1080p on HDMI.
    The frames had no end (see the zero-length URB invariant; commit 627c569),
    and the conversion at that width fell off the streaming-load path (78 ms
    per frame; commit b22b48e). To verify, from a real TTY:
