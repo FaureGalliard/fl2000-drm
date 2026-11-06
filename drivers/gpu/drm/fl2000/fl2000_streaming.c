@@ -577,7 +577,8 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
 
 /*
  * Convert one damaged rectangle of the source framebuffer into the shadow
- * frame, from RGB565 if the device is sent that and from XRGB8888 otherwise. The shadow is the only thing written here, so it is always the
+ * frame, from RGB565 if the device is sent that and from XRGB8888 otherwise.
+ * The shadow is the only thing written here, so it is always the
  * complete current frame: an update can never be lost because no URB buffer
  * happened to be free.
  *

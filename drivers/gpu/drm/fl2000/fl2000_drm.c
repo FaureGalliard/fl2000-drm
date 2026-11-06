@@ -627,9 +627,7 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
  * fl2000_drm_destroy() - stop the display and take the DRM device away from userspace
  * @fdev: the DRM device
  *
- * Called when the USB interfaces are unbound. The DRM device itself is freed when the last
- * reference goes away: that of the interface, a devres, and those of any file userspace still has
- * open.
+ * Called when the USB interfaces are unbound.
  */
 void fl2000_drm_destroy(struct fl2000_device *fdev)
 {
