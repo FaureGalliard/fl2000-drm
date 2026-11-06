@@ -81,12 +81,14 @@ basic() {
 
 	say "T03 frames reach the device, correct and word-swapped"
 	show_verify 1920 1080 1920 1080 0 0 xr24 3
-	show_verify 1366 768 1366 768 0 0 ar30 3
+	show_verify 1366 768 1366 768 0 0 xr24 3
+	show_verify 1366 768 1366 768 0 0 rg16 2
 	scan T03
 
 	say "T04 framebuffer larger than the mode, with a source offset"
 	show_verify 800 600 1000 700 37 21 xr24 3
-	show_verify 1024 768 1200 800 3 5 ar30 3
+	show_verify 1024 768 1200 800 3 5 rg16 2
+	$T/fl2000-t format $(card) 1024 768 100000 1 && pass "format change takes a mode set" || fail "format change"
 	scan T04
 
 	say "T06 a huge mode with the primary plane off screen"
@@ -278,7 +280,8 @@ variants() {
 	say "T42 high speed: RGB565 at 640x480"
 	emu_start --high-speed
 	wait_card && pass "binds on high speed" || fail "no device on high speed"
-	show_verify 640 480 640 480 0 0 xr24 2
+	show_verify 640 480 640 480 0 0 rg16 2
+	$T/fl2000-t format $(card) 640 480 25000 0 && pass "the plane rejects what the link cannot carry" || fail "format past the link"
 	scan T42
 	emu_stop; wait_nocard; sleep 0.5
 }

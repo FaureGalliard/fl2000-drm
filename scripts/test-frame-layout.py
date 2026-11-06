@@ -27,8 +27,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, 'drivers/gpu/drm/fl2000/fl2000_streaming.c')
 
 FUNCS = ['fl2000_copy_rect',
-         'fl2000_xrgb8888_to_rgb888_line', 'fl2000_xrgb8888_to_rgb565_line',
-         'fl2000_xrgb2101010_to_xrgb8888_line', 'fl2000_read_span', 'fl2000_stream_compress']
+         'fl2000_xrgb8888_to_rgb888_line', 'fl2000_rgb565_to_frame_line',
+         'fl2000_read_span', 'fl2000_stream_compress']
 
 PRELUDE = r'''
 #include <stdbool.h>
@@ -47,8 +47,6 @@ typedef uint8_t u8; typedef uint16_t u16; typedef uint32_t u32;
 #define IS_ALIGNED(x, a) (((x) & ((__typeof__(x))(a) - 1)) == 0)
 #define guard(t) (void)
 #define FL2000_DAMAGE_LOG 16
-#define DRM_FORMAT_XRGB8888 1
-#define DRM_FORMAT_XRGB2101010 2
 struct drm_rect { int x1, y1, x2, y2; };
 static int drm_rect_width(const struct drm_rect *r) { return r->x2 - r->x1; }
 static int drm_rect_height(const struct drm_rect *r) { return r->y2 - r->y1; }
@@ -151,9 +149,14 @@ static int test_case(u32 w, u32 h, u32 bpp)
 			if (bpp == 3)
 				fl2000_xrgb8888_to_rgb888_line(shadow, (size_t)y * w * 3,
 							       &src[(size_t)y * w + x], x, x + n);
-			else
-				fl2000_xrgb8888_to_rgb565_line((u16 *)shadow, (size_t)y * w,
-							       &src[(size_t)y * w + x], x, x + n);
+			else {
+				u16 *line = malloc(n * 2);
+
+				for (u32 i = 0; i < n; i++)
+					line[i] = pack565(src[(size_t)y * w + x + i]);
+				fl2000_rgb565_to_frame_line((u16 *)shadow, (size_t)y * w, line, x, x + n);
+				free(line);
+			}
 			x += n;
 		}
 	}
@@ -186,13 +189,29 @@ static int test_case(u32 w, u32 h, u32 bpp)
 	return 0;
 }
 
+/* A pixel of the framebuffer, as something that ref_convert() takes */
+static u32 from_fb(const u8 *p, u32 bpp)
+{
+	if (bpp == 2) {
+		u16 v;
+
+		memcpy(&v, p, 2);
+		return ((u32)(v & 0xF800) << 8) | ((u32)(v & 0x07E0) << 5) | ((u32)(v & 0x001F) << 3);
+	}
+	u32 v;
+
+	memcpy(&v, p, 4);
+	return v;
+}
+
 /* The frame shown is a window of a larger framebuffer, and only part of it changed */
-static int test_compress(u32 w, u32 h, u32 bpp, bool wc, u32 format)
+static int test_compress(u32 w, u32 h, u32 bpp, bool wc)
 {
 	u32 sx = rndn(40), sy = rndn(9), fb_w = w + sx + rndn(40), fb_h = h + sy + rndn(9);
-	u32 pitch = (fb_w + rndn(20)) * 4;
+	u32 cpp = bpp == 2 ? 2 : 4, pitch = (fb_w + rndn(20)) * cpp;
 	size_t fb_size = (size_t)pitch * fb_h + 16, sz = frame_size(w, h, bpp);
-	u32 *fb = malloc(fb_size), *frame = malloc((size_t)w * h * 4);
+	u8 *fb = malloc(fb_size);
+	u32 *frame = malloc((size_t)w * h * 4);
 	struct fl2000_stream st = { .width = w, .height = h, .bytes_pix = bpp, .buf_size = sz };
 	struct iosys_map map = { .vaddr = fb, .is_iomem = wc };
 	struct drm_rect src = { sx, sy, sx + w, sy + h };
@@ -204,30 +223,29 @@ static int test_compress(u32 w, u32 h, u32 bpp, bool wc, u32 format)
 	clip.x2 = clip.x1 + 1 + rndn(fb_w - clip.x1);
 	clip.y2 = clip.y1 + 1 + rndn(fb_h - clip.y1);
 
-	for (size_t i = 0; i < fb_size / 4; i++)
+	for (size_t i = 0; i < fb_size; i++)
 		fb[i] = rnd();
 
-	#define PIX(x, y) fb[(size_t)(y) * (pitch / 4) + (x)]
-	#define FROM_FB(p) (format == DRM_FORMAT_XRGB8888 ? (p) : \
-			    ((((p) >> 22) & 0xFF) << 16) | ((((p) >> 12) & 0xFF) << 8) | (((p) >> 2) & 0xFF))
+	#define PIX(x, y) (fb + (size_t)(y) * pitch + (size_t)(x) * cpp)
 
 	/* What the frame held before the update: outside the damage it must stay */
 	for (u32 y = 0; y < h; y++)
 		for (u32 x = 0; x < w; x++)
-			frame[(size_t)y * w + x] = FROM_FB(PIX(sx + x, sy + y));
+			frame[(size_t)y * w + x] = from_fb(PIX(sx + x, sy + y), bpp);
 	st.shadow = ref_convert(frame, w, h, bpp);
 	st.line_buf = line_buf;
 
 	/* The update */
 	for (int y = clip.y1; y < clip.y2; y++)
 		for (int x = clip.x1; x < clip.x2; x++)
-			PIX(x, y) = rnd();
+			for (u32 b = 0; b < cpp; b++)
+				PIX(x, y)[b] = rnd();
 	for (u32 y = 0; y < h; y++)
 		for (u32 x = 0; x < w; x++)
-			frame[(size_t)y * w + x] = FROM_FB(PIX(sx + x, sy + y));
+			frame[(size_t)y * w + x] = from_fb(PIX(sx + x, sy + y), bpp);
 	want = ref_convert(frame, w, h, bpp);
 
-	fl2000_stream_compress(&st, &map, wc, format, pitch, &src, &clip);
+	fl2000_stream_compress(&st, &map, wc, pitch, &src, &clip);
 
 	d = first_diff(st.shadow, want, sz);
 	if (d >= 0)
@@ -249,8 +267,7 @@ int main(void)
 
 		if (test_case(w, h, bpp))
 			return 1;
-		if (test_compress(w, h, bpp, rnd() & 1,
-				  rnd() & 1 ? DRM_FORMAT_XRGB8888 : DRM_FORMAT_XRGB2101010))
+		if (test_compress(w, h, bpp, rnd() & 1))
 			return 1;
 		cases++;
 	}

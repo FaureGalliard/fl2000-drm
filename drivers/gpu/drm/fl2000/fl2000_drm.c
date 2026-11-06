@@ -8,7 +8,6 @@
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
-#include <drm/drm_blend.h>
 #include <drm/drm_bridge_connector.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fbdev_shmem.h>
@@ -36,16 +35,12 @@
 #define FL2000_MAX_VTOTAL FIELD_MAX(FL2000_VGA_VSYNC1_VTOTAL)
 
 /*
- * 32-bit input. The 10-bit formats are accepted because the compositor hands
- * us its scanout buffer as it is: Mutter renders ARGB2101010 and, when the
- * secondary output cannot take that format, falls back to a copy path that
- * has leaked GPU memory until the desktop stalled.
+ * RGB565 goes to the device as it is. RGB888 is what it takes otherwise, and XRGB8888, which all of
+ * userspace expects, is converted to it.
  */
-#define FL2000_FB_BPP 32
 static const u32 fl2000_pixel_formats[] = {
 	DRM_FORMAT_XRGB8888,
-	DRM_FORMAT_XRGB2101010,
-	DRM_FORMAT_ARGB2101010,
+	DRM_FORMAT_RGB565,
 };
 
 /*
@@ -82,17 +77,22 @@ static const u32 fl2000_pixel_formats[] = {
 #define FL2000_BULK_BW_HIGH_SPEED  (53248000ull * 90 / 100)
 #define FL2000_BULK_BW_SUPER_SPEED (500000000ull * 90 / 100)
 
-/*
- * Bytes per pixel the USB link can carry for @mode: 3 (RGB888), 2 (RGB565) or 0 for neither. The
- * FL2000 has a line buffer and no frame buffer: it takes the active pixels of exactly one frame per
- * refresh, so the stream needs the rate of the active area, not the pixel clock.
- */
-static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed,
-					 const struct drm_display_mode *mode)
+/* Bytes per pixel that the device is sent for a framebuffer */
+static unsigned int fl2000_fb_bytes_pix(const struct drm_framebuffer *fb)
 {
-	u64 max_bw, rate;
+	return fb->format->format == DRM_FORMAT_RGB565 ? 2 : 3;
+}
+
+/*
+ * Can the USB link carry @mode at @bytes_pix bytes per pixel? The FL2000 has a line buffer and no
+ * frame buffer: it takes the active pixels of exactly one frame per refresh, so the stream needs
+ * the rate of the active area, not the pixel clock.
+ */
+static bool fl2000_link_fits(enum usb_device_speed speed, const struct drm_display_mode *mode,
+			     unsigned int bytes_pix)
+{
 	u32 total = (u32)mode->htotal * mode->vtotal;
-	u64 bytes_pix;
+	u64 max_bw, rate;
 
 	switch (speed) {
 	case USB_SPEED_HIGH:
@@ -103,25 +103,16 @@ static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed,
 		max_bw = FL2000_BULK_BW_SUPER_SPEED;
 		break;
 	default:
-		return 0;
+		return false;
 	}
 
 	if (!total)
-		return 0;
+		return false;
 
 	/* Active pixels per second; at most 500 MHz x 4000 x 4000 (see fl2000_mode_calc()) */
 	rate = div_u64((u64)mode->clock * 1000 * mode->hdisplay * mode->vdisplay, total);
-	if (!rate)
-		return 0;
 
-	bytes_pix = div64_u64(max_bw, rate);
-	if (bytes_pix >= 3)
-		return 3; /* RGB888 */
-	if (bytes_pix == 2)
-		return 2; /* RGB565 */
-
-	/* RGB332 is not supported */
-	return 0;
+	return rate * bytes_pix <= max_bw;
 }
 
 struct fl2000_drm_if {
@@ -185,9 +176,34 @@ static struct drm_driver fl2000_drm_driver = {
 	.patchlevel = DRM_DRIVER_PATCHLEVEL,
 };
 
+/*
+ * What the device is sent is set up along with the mode, and the stream sizes its buffers from it:
+ * a framebuffer that changes it takes a full mode set.
+ */
+static int fl2000_atomic_check(struct drm_device *drm, struct drm_atomic_commit *state)
+{
+	struct drm_plane *plane = &to_fl2000_drm_if(drm)->plane;
+	const struct drm_plane_state *new_state = drm_atomic_get_new_plane_state(state, plane);
+	const struct drm_plane_state *old_state = drm_atomic_get_old_plane_state(state, plane);
+
+	if (new_state && new_state->crtc && new_state->fb &&
+	    (!old_state->fb ||
+	     fl2000_fb_bytes_pix(old_state->fb) != fl2000_fb_bytes_pix(new_state->fb))) {
+		struct drm_crtc_state *crtc_state = drm_atomic_get_crtc_state(state,
+									      new_state->crtc);
+
+		if (IS_ERR(crtc_state))
+			return PTR_ERR(crtc_state);
+
+		crtc_state->mode_changed = true;
+	}
+
+	return drm_atomic_helper_check(drm, state);
+}
+
 static const struct drm_mode_config_funcs fl2000_mode_config_funcs = {
 	.fb_create = drm_gem_fb_create_with_dirty,
-	.atomic_check = drm_atomic_helper_check,
+	.atomic_check = fl2000_atomic_check,
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
@@ -318,7 +334,8 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_PPM_ERR_MAX_VGA))
 		return MODE_BAD;
 
-	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, &adjusted_mode) == 0)
+	/* Whatever the framebuffer: the plane checks the format it has */
+	if (!fl2000_link_fits(drm_if->usb_dev->speed, &adjusted_mode, 2))
 		return MODE_CLOCK_HIGH;
 
 	return MODE_OK;
@@ -337,13 +354,24 @@ static int fl2000_plane_atomic_check(struct drm_plane *plane, struct drm_atomic_
 {
 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state, plane);
 	struct drm_crtc_state *new_crtc_state = NULL;
+	int ret;
 
 	if (new_plane_state->crtc)
 		new_crtc_state = drm_atomic_get_new_crtc_state(state, new_plane_state->crtc);
 
-	return drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
-						   DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
-						   false, false);
+	ret = drm_atomic_helper_check_plane_state(new_plane_state, new_crtc_state,
+						  DRM_PLANE_NO_SCALING, DRM_PLANE_NO_SCALING,
+						  false, false);
+	if (ret)
+		return ret;
+
+	if (new_plane_state->visible &&
+	    !fl2000_link_fits(to_fl2000_drm_if(plane->dev)->usb_dev->speed,
+			      &new_crtc_state->adjusted_mode,
+			      fl2000_fb_bytes_pix(new_plane_state->fb)))
+		return -EINVAL;
+
+	return 0;
 }
 
 /*
@@ -374,8 +402,7 @@ static void fl2000_plane_atomic_update(struct drm_plane *plane, struct drm_atomi
 		start = ktime_get();
 		drm_rect_fp_to_int(&src, &plane_state->src);
 		fl2000_stream_compress(drm_if->stream, &shadow_plane_state->data[0],
-				       drm_gem_is_imported(fb->obj[0]), fb->format->format,
-				       fb->pitches[0], &src, &damage);
+				       drm_gem_is_imported(fb->obj[0]), fb->pitches[0], &src, &damage);
 		fl2000_stream_note_render(drm_if->stream,
 					  (unsigned int)ktime_us_delta(ktime_get(), start),
 					  drm_rect_width(&damage) * drm_rect_height(&damage));
@@ -405,7 +432,6 @@ static const struct drm_plane_funcs fl2000_plane_funcs = {
 static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
 {
 	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
 	struct fl2000_pll pll;
 	int ret;
 
@@ -417,16 +443,8 @@ static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_com
 		return 0;
 
 	/* PLL configuration, with htotal and clock adjusted to what the PLL can produce */
-	ret = fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll,
-			       FL2000_PPM_ERR_MAX_VGA);
-	if (ret)
-		return ret;
-
-	/* The USB link must be able to carry the adjusted pixel clock */
-	if (!fl2000_get_bytes_pix(drm_if->usb_dev->speed, &crtc_state->adjusted_mode))
-		return -EINVAL;
-
-	return 0;
+	return fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll,
+				FL2000_PPM_ERR_MAX_VGA);
 }
 
 /*
@@ -469,7 +487,6 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
 	struct drm_device *drm = crtc->dev;
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
-	struct usb_device *usb_dev = drm_if->usb_dev;
 	struct regmap *regmap = drm_if->regmap;
 	const struct drm_display_mode *mode = &crtc->state->mode;
 	const struct drm_display_mode *adjusted_mode = &crtc->state->adjusted_mode;
@@ -484,7 +501,8 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	 */
 	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX_VGA)))
 		return;
-	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode);
+	/* The CRTC needs a primary plane to be enabled, and this state is the one being applied */
+	bytes_pix = fl2000_fb_bytes_pix(drm_if->plane.state->fb);
 
 	/* The registers go with the USB device */
 	if (!drm_dev_enter(drm, &idx))
@@ -781,18 +799,6 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 		return ERR_PTR(ret);
 	}
 	drm_plane_helper_add(&drm_if->plane, &fl2000_plane_helper_funcs);
-
-	/*
-	 * The primary plane ignores the alpha of ARGB2101010, which is right for both modes: it is
-	 * the bottom layer, on black, where premultiplied colours are already the result.
-	 */
-	ret = drm_plane_create_blend_mode_property(&drm_if->plane,
-						   BIT(DRM_MODE_BLEND_PIXEL_NONE) |
-						   BIT(DRM_MODE_BLEND_PREMULTI));
-	if (ret) {
-		drm_err(drm, "Cannot set the plane blend modes (%d)\n", ret);
-		return ERR_PTR(ret);
-	}
 
 	/*
 	 * Enable the damage-clips property the update path relies on

@@ -101,7 +101,7 @@ struct fl2000_stream {
 	atomic_t conv_us_max;
 	atomic_t damage_px_total;
 	ktime_t last_report;
-	/* Cached staging buffer for one scanline of XRGB8888 source pixels */
+	/* Cached staging buffer for one scanline of source pixels */
 	u32 *line_buf;
 };
 
@@ -533,30 +533,11 @@ static void fl2000_xrgb8888_to_rgb888_line(u8 *frame, size_t line, const u32 *sb
 	}
 }
 
-static void fl2000_xrgb8888_to_rgb565_line(u16 *frame, size_t line, const u32 *sbuf, u32 x_start,
-					   u32 x_end)
+static void fl2000_rgb565_to_frame_line(u16 *frame, size_t line, const u16 *sbuf, u32 x_start,
+					u32 x_end)
 {
-	for (unsigned int x = x_start; x < x_end; x++) {
-		u32 pix = *sbuf++;
-
-		frame[(line + x) ^ 2] = ((pix & 0x00F80000) >> 8) | ((pix & 0x0000FC00) >> 5) |
-					((pix & 0x000000F8) >> 3);
-	}
-}
-
-/*
- * The 10-bit formats keep the colour in bits 29:0 (bits 31:30 are unused or
- * alpha, which the primary plane ignores). Drop the two low bits of each
- * channel, in place, so the converters above only deal with XRGB8888.
- */
-static void fl2000_xrgb2101010_to_xrgb8888_line(u32 *buf, u32 x_start, u32 x_end)
-{
-	for (unsigned int x = x_start; x < x_end; x++) {
-		u32 pix = buf[x - x_start];
-
-		buf[x - x_start] = (((pix >> 22) & 0xFF) << 16) | (((pix >> 12) & 0xFF) << 8) |
-				   ((pix >> 2) & 0xFF);
-	}
+	for (unsigned int x = x_start; x < x_end; x++)
+		frame[(line + x) ^ 2] = *sbuf++;
 }
 
 /*
@@ -596,7 +577,7 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
 
 /*
  * Convert one damaged rectangle of the source framebuffer into the shadow
- * frame. The shadow is the only thing written here, so it is always the
+ * frame, from RGB565 if the device is sent that and from XRGB8888 otherwise. The shadow is the only thing written here, so it is always the
  * complete current frame: an update can never be lost because no URB buffer
  * happened to be free.
  *
@@ -605,9 +586,11 @@ static void fl2000_read_span(struct fl2000_stream *stream, const struct iosys_ma
  * the framebuffer.
  */
 void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map *src_map,
-			    bool imported, u32 format, unsigned int pitch,
+			    bool imported, unsigned int pitch,
 			    const struct drm_rect *src, const struct drm_rect *clip)
 {
+	unsigned int src_cpp = stream->bytes_pix == 2 ? 2 : sizeof(u32);
+	unsigned int line_px = 16 / src_cpp;
 	bool wc = imported || src_map->is_iomem;
 	struct drm_rect rect = *clip;
 	u32 dst_line_len;
@@ -625,22 +608,21 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		return;
 
 	/*
-	 * Streaming loads need 16-byte alignment, which is 4 source pixels.
-	 * Widening the span converts a few pixels twice, which is free next to
-	 * losing the fast path.
+	 * Streaming loads need 16-byte alignment. Widening the span converts a
+	 * few pixels twice, which is free next to losing the fast path.
 	 */
-	x1 = rect.x1 & ~3;
+	x1 = rect.x1 & ~(line_px - 1);
 	if (x1 < src->x1)
 		x1 = rect.x1;
 
 	/* From here on the coordinates are those of the frame */
 	x_start = x1 - src->x1;
-	x_end = min(ALIGN(rect.x2, 4), src->x2) - src->x1;
+	x_end = min_t(int, ALIGN(rect.x2, line_px), src->x2) - src->x1;
 	y_start = rect.y1 - src->y1;
 	y_end = rect.y2 - src->y1;
 
 	dst_line_len = stream->width * stream->bytes_pix;
-	span = (x_end - x_start) * sizeof(u32);
+	span = (x_end - x_start) * src_cpp;
 
 	for (unsigned int y = y_start; y < y_end; y++) {
 		/*
@@ -649,22 +631,18 @@ void fl2000_stream_compress(struct fl2000_stream *stream, const struct iosys_map
 		 * source issues one read per pixel.
 		 */
 		fl2000_read_span(stream, src_map, wc,
-				 (size_t)(y + src->y1) * pitch + (size_t)x1 * sizeof(u32), span);
-
-		if (format != DRM_FORMAT_XRGB8888)
-			fl2000_xrgb2101010_to_xrgb8888_line(stream->line_buf, x_start, x_end);
+				 (size_t)(y + src->y1) * pitch + (size_t)x1 * src_cpp, span);
 
 		switch (stream->bytes_pix) {
 		case 2:
-			fl2000_xrgb8888_to_rgb565_line(stream->shadow, (size_t)y * stream->width,
-						       stream->line_buf, x_start, x_end);
+			fl2000_rgb565_to_frame_line(stream->shadow, (size_t)y * stream->width,
+						    (const u16 *)stream->line_buf, x_start, x_end);
 			break;
 		case 3:
 			fl2000_xrgb8888_to_rgb888_line(stream->shadow, (size_t)y * dst_line_len,
 						       stream->line_buf, x_start, x_end);
 			break;
 		default:
-			/* Rejected by fl2000_get_bytes_pix() */
 			break;
 		}
 	}

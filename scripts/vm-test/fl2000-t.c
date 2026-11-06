@@ -234,7 +234,7 @@ static int cmd_show(char **a)
 {
 	int w = atoi(a[0]), h = atoi(a[1]), fw = atoi(a[2]), fh = atoi(a[3]);
 	int sx = atoi(a[4]), sy = atoi(a[5]), secs = atoi(a[6]);
-	uint32_t fourcc = !strcmp(a[7], "ar30") ? DRM_FORMAT_ARGB2101010 : DRM_FORMAT_XRGB8888;
+	uint32_t fourcc = !strcmp(a[7], "rg16") ? DRM_FORMAT_RGB565 : DRM_FORMAT_XRGB8888;
 	struct fbuf f;
 	drmModeModeInfo m;
 	int ret;
@@ -246,9 +246,11 @@ static int cmd_show(char **a)
 		for (int x = 0; x < fw; x++) {
 			uint32_t p = pattern(x, y);
 
-			if (fourcc == DRM_FORMAT_ARGB2101010)
-				p = 0xc0000000 | ((p >> 16 & 0xff) << 22) | ((p >> 8 & 0xff) << 12) | ((p & 0xff) << 2);
-			f.map[(size_t)y * (f.pitch / 4) + x] = p;
+			if (fourcc == DRM_FORMAT_RGB565)
+				((uint16_t *)f.map)[(size_t)y * (f.pitch / 2) + x] =
+					((p & 0xF80000) >> 8) | ((p & 0xFC00) >> 5) | ((p & 0xF8) >> 3);
+			else
+				f.map[(size_t)y * (f.pitch / 4) + x] = p;
 		}
 	/* A clock the PLL makes exactly (10 MHz * 5 / 2 or * 40 / 4), for the 500 ppm of HDMI */
 	make_mode(&m, w, h, w * h <= 640 * 480 ? 25000 : 100000);
@@ -259,6 +261,48 @@ static int cmd_show(char **a)
 	fflush(stdout);
 	sleep(secs);
 	return 0;
+}
+
+/*
+ * Change what the device is sent while streaming: that takes a mode set, without permission for
+ * one the commit must fail, and a format the USB link cannot carry must fail too.
+ */
+static int cmd_format(int w, int h, int clock, int xrgb_fits)
+{
+	struct fbuf x, r;
+	drmModeModeInfo m;
+	int ret;
+
+	if (make_fb(&x, w, h, DRM_FORMAT_XRGB8888) || make_fb(&r, w, h, DRM_FORMAT_RGB565))
+		return 2;
+	make_mode(&m, w, h, clock);
+	ret = commit(&m, &x, 0, 0, w, h, 0, DRM_MODE_ATOMIC_ALLOW_MODESET);
+	if (!xrgb_fits) {
+		if (ret != -EINVAL)
+			return fprintf(stderr, "XRGB8888 past the link: %s\n", strerror(-ret)), 1;
+		printf("XRGB8888 past the link is rejected\n");
+		ret = commit(&m, &r, 0, 0, w, h, 0, DRM_MODE_ATOMIC_ALLOW_MODESET);
+		if (ret)
+			return fprintf(stderr, "RGB565: %s\n", strerror(-ret)), 1;
+		printf("RGB565 is accepted\n");
+		return disable_all() ? 1 : 0;
+	}
+	if (ret)
+		return fprintf(stderr, "XRGB8888: %s\n", strerror(-ret)), 1;
+	ret = commit(NULL, &r, 0, 0, w, h, 0, 0);
+	if (ret != -EINVAL)
+		return fprintf(stderr, "switch without a mode set: %s\n", strerror(-ret)), 1;
+	printf("a switch without a mode set is rejected\n");
+	ret = commit(NULL, &r, 0, 0, w, h, 0, DRM_MODE_ATOMIC_ALLOW_MODESET);
+	if (ret)
+		return fprintf(stderr, "RGB565: %s\n", strerror(-ret)), 1;
+	sleep(1);
+	ret = commit(NULL, &x, 0, 0, w, h, 0, DRM_MODE_ATOMIC_ALLOW_MODESET);
+	if (ret)
+		return fprintf(stderr, "back to XRGB8888: %s\n", strerror(-ret)), 1;
+	sleep(1);
+	printf("switched with mode sets\n");
+	return disable_all() ? 1 : 0;
 }
 
 static int cmd_failnth(int start, int max)
@@ -523,6 +567,8 @@ int main(int argc, char **argv)
 		return cmd_show(argv + 3);
 	if (!strcmp(argv[1], "failnth"))
 		return cmd_failnth(atoi(argv[3]), atoi(argv[4]));
+	if (!strcmp(argv[1], "format"))
+		return cmd_format(atoi(argv[3]), atoi(argv[4]), atoi(argv[5]), atoi(argv[6]));
 	if (!strcmp(argv[1], "flips"))
 		return cmd_flips(atoi(argv[3]));
 	if (!strcmp(argv[1], "damage"))
