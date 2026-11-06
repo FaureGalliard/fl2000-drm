@@ -289,19 +289,21 @@ off. What it found, and what stands now:
   setup`, drm-misc-next only: 7.2.11 has no such check).
 
 How it was tested, since the adapter was not at hand: a fake FL2000 + IT66121 in
-userspace, on `raw_gadget` and `dummy_hcd` in a VM running drm-misc-next with
-KASAN, lockdep, kmemleak and fault injection, and the driver unmodified. It answers
-the register, I2C and EDID traffic and checks the frames that reach the bulk
-endpoint byte by byte. 95 checks pass with no kernel complaint (`docs/vm-test-v2.log`):
-frames for every format and width, framebuffers larger than the mode, cursor,
-hot plug, unplug while streaming with the file open, replug, `rmmod` and then
-unplug, loading with the adapter present, sysfs unbind and bind of any interface,
-rebinding with the old device held open, a USB reset while streaming, unplugging
-in the middle of the probe, storms of commits during unbind, allocation failures
-all over the mode set, and no leaks. The same tests against the v1 driver crash it:
-`rmmod` then unplug, the huge mode, and a zero-length I2C message. None of this
-says anything about the real chip: the timings, the DAC, the IT66121 itself, the
-amdgpu import or GNOME. Those need the adapter.
+userspace, on `raw_gadget` and `dummy_hcd` in a VM (branch `test/vm-harness`,
+`scripts/vm-test/`). It answers the register, I2C and EDID traffic and checks the
+frames that reach the bulk endpoint byte by byte. It ran on two kernels, with the
+driver unmodified: drm-misc-next with KASAN, lockdep, kmemleak and fault injection,
+and the real Arch 7.2.11 with the very `fl2000.ko` that gets installed, compat
+helpers included. About 100 checks pass on each (`docs/vm-test-v2.log`): frames for
+every format and width, damage clips and framebuffers larger than the mode, cursor,
+legacy and atomic page flips at the refresh rate, hot plug, unplug while streaming
+with the file open, replug, `rmmod` and then unplug, loading with the adapter
+present, sysfs unbind and bind of any interface, rebinding with the old device held
+open, a USB reset while streaming, unplugging in the middle of the probe, storms of
+commits during unbind, allocation failures all over the mode set, and no leaks. The
+same tests against the v1 driver crash it: `rmmod` then unplug, the huge mode, and a
+zero-length I2C message. None of this says anything about the real chip: the timings,
+the DAC, the IT66121 itself, the amdgpu import or GNOME. Those need the adapter.
 
 One thing seen there and left alone: `vblank wait timed out on crtc 0` from
 `drm_fb_helper_damage_work` if something is writing to the fbdev, with no compositor,
