@@ -228,17 +228,18 @@ int fl2000_read_status(struct usb_device *usb_dev, u32 *status)
 {
 	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	unsigned int val;
-	u32 mask;
 	int ret;
 
 	ret = regmap_read(regmap, FL2000_VGA_STATUS_REG, &val);
 	if (ret)
 		return ret;
 
-	/* LBUF issues are recoverable */
-	mask = val & (FL2000_VGA_STATUS_LBUF_OVERFLOW | FL2000_VGA_STATUS_LBUF_UNDERFLOW);
-	if (mask)
-		regmap_write_bits(regmap, FL2000_VGA_STATUS_REG, mask, val);
+	/*
+	 * LBUF issues are recoverable: write their bits back. regmap_write_bits() would read the
+	 * register once more and lose any event raised since the read above.
+	 */
+	if (val & (FL2000_VGA_STATUS_LBUF_OVERFLOW | FL2000_VGA_STATUS_LBUF_UNDERFLOW))
+		regmap_write(regmap, FL2000_VGA_STATUS_REG, val & ~FL2000_VGA_STATUS_SELF_CLEAR);
 
 	/* lbuf_halt and vga_error are not handled: no recovery sequence is known */
 
