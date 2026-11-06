@@ -129,8 +129,6 @@ struct fl2000_drm_if {
 	struct regmap *regmap;
 	struct i2c_adapter *adapter;
 	struct drm_bridge *bridge;
-	/* Set once userspace can see the device: events before that have nobody to tell */
-	bool registered;
 };
 
 static inline struct fl2000_drm_if *to_fl2000_drm_if(struct drm_device *drm)
@@ -618,8 +616,7 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 			drm_dbg_kms(drm, "Cannot acknowledge IT66121 interrupts (%d)\n", ret);
 	}
 
-	/* The device sends uevents only once it has been registered */
-	if (!smp_load_acquire(&drm_if->registered) || !drm_dev_enter(drm, &idx))
+	if (!drm_dev_enter(drm, &idx))
 		return;
 
 	drm_kms_helper_hotplug_event(drm);
@@ -702,15 +699,15 @@ int fl2000_drm_resume(struct fl2000_drm_if *drm_if)
 	/* The same order as in fl2000_drm_create() */
 	fl2000_chip_setup(drm_if);
 
-	/* Without interrupts the connectors are still polled */
-	fl2000_intr_resume(drm_if->intr);
-
 	/* There is nothing to restore if saving the state failed */
 	if (drm_if->drm.mode_config.suspend_state) {
 		ret = drm_mode_config_helper_resume(&drm_if->drm);
 		if (ret)
 			drm_err(&drm_if->drm, "Cannot restore the display after sleep (%d)\n", ret);
 	}
+
+	/* Without interrupts the connectors are still polled */
+	fl2000_intr_start(drm_if->intr);
 
 	drm_kms_helper_hotplug_event(&drm_if->drm);
 
@@ -821,11 +818,10 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 	if (ret)
 		return ERR_PTR(ret);
 
-	/* Start interrupts interface */
 	drm_if->intr = fl2000_intr_create(usb_dev, regmap, drm);
 	if (IS_ERR(drm_if->intr)) {
 		ret = PTR_ERR(drm_if->intr);
-		drm_err(drm, "Cannot start interrupt polling (%d)\n", ret);
+		drm_err(drm, "Cannot set up interrupts (%d)\n", ret);
 		return ERR_PTR(ret);
 	}
 
@@ -880,8 +876,8 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 		goto err_destroy_intr;
 	}
 
-	/* From here on the interrupt work may tell userspace about monitors */
-	smp_store_release(&drm_if->registered, true);
+	/* Without interrupts the connectors are still polled */
+	fl2000_intr_start(drm_if->intr);
 
 	/* Polls both connectors: events can be missed, and HDMI has no hot plug of its own */
 	drm_kms_helper_poll_init(drm);

@@ -106,7 +106,7 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct regmap
 				       struct drm_device *drm);
 void fl2000_intr_quiesce(struct fl2000_intr *intr);
 void fl2000_intr_suspend(struct fl2000_intr *intr);
-int fl2000_intr_resume(struct fl2000_intr *intr);
+int fl2000_intr_start(struct fl2000_intr *intr);
 int fl2000_intr_monitor_connected(struct fl2000_intr *intr);
 void fl2000_intr_destroy(struct fl2000_intr *intr);
 

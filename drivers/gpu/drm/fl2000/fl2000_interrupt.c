@@ -109,7 +109,7 @@ static void fl2000_intr_completion(struct urb *urb)
  * @regmap: FL2000 registers
  * @drm: DRM device that receives the hotplug events
  *
- * Called when the DRM device is set up. Starts polling the interrupt endpoint.
+ * Called when the DRM device is set up. fl2000_intr_start() starts polling the interrupt endpoint.
  *
  * Return: interrupt context, or an ERR_PTR() on failure
  */
@@ -160,13 +160,6 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct regmap
 	intr->urb->transfer_dma = intr->transfer_dma;
 	intr->urb->transfer_flags |= URB_NO_TRANSFER_DMA_MAP;
 
-	/* Start checking for interrupts */
-	ret = usb_submit_urb(intr->urb, GFP_KERNEL);
-	if (ret) {
-		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
-		goto err_destroy;
-	}
-
 	return intr;
 
 err_destroy:
@@ -193,7 +186,7 @@ void fl2000_intr_quiesce(struct fl2000_intr *intr)
  * fl2000_intr_suspend() - stop polling the interrupt endpoint for system sleep
  * @intr: interrupt context
  *
- * Unlike fl2000_intr_quiesce(), the URB can be submitted again by fl2000_intr_resume().
+ * Unlike fl2000_intr_quiesce(), the URB can be submitted again by fl2000_intr_start().
  */
 void fl2000_intr_suspend(struct fl2000_intr *intr)
 {
@@ -202,12 +195,15 @@ void fl2000_intr_suspend(struct fl2000_intr *intr)
 }
 
 /**
- * fl2000_intr_resume() - poll the interrupt endpoint again after system sleep
+ * fl2000_intr_start() - poll the interrupt endpoint
  * @intr: interrupt context
+ *
+ * When the display is ready to hear about monitors: its hotplug events must find the DRM device
+ * registered, and after system sleep the pipeline restored.
  *
  * Return: 0 on success, the URB submission error otherwise
  */
-int fl2000_intr_resume(struct fl2000_intr *intr)
+int fl2000_intr_start(struct fl2000_intr *intr)
 {
 	int ret;
 
