@@ -69,48 +69,56 @@ static const u32 fl2000_cursor_formats[] = {
 #define FL2000_PPM_ERR_MAX	500
 #define FL2000_PPM_ERR_MAX_VGA	5000
 
-/* Assume bulk transfers can use only 80% of USB bandwidth */
-#define FL2000_BULK_BW_PERCENT 80
+/*
+ * Bulk payload the link sustains, bytes per second. High speed carries at most 13 packets of 512
+ * bytes per 125 us microframe (53 MB/s); SuperSpeed 500 MB/s after its 8b/10b encoding. Packet and
+ * link overhead are taken as 10 %. On SuperSpeed 1920x1080 at 60 Hz in RGB888 (373 MB/s) streams
+ * fine, and the vendor driver offers 1920x1200 at 60 Hz in RGB888 (415 MB/s). The FL2000 is a
+ * 5 Gb/s device: it never runs at SuperSpeed Plus.
+ */
+#define FL2000_BULK_BW_HIGH_SPEED  (53248000ull * 90 / 100)
+#define FL2000_BULK_BW_SUPER_SPEED (500000000ull * 90 / 100)
 
-#define FL2000_BULK_BW_HIGH_SPEED	(480000000ull * 100 / FL2000_BULK_BW_PERCENT / 8)
-#define FL2000_BULK_BW_SUPER_SPEED	(5000000000ull * 100 / FL2000_BULK_BW_PERCENT / 8)
-#define FL2000_BULK_BW_SUPER_SPEED_PLUS (10000000000ull * 100 / FL2000_BULK_BW_PERCENT / 8)
-
-static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed, unsigned int pixclock)
+/*
+ * Bytes per pixel the USB link can carry for @mode: 3 (RGB888), 2 (RGB565) or 0 for neither. The
+ * FL2000 has a line buffer and no frame buffer: it takes the active pixels of exactly one frame per
+ * refresh, so the stream needs the rate of the active area, not the pixel clock.
+ */
+static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed,
+					 const struct drm_display_mode *mode)
 {
-	unsigned int bytes_pix;
-	unsigned int max_bw;
+	u64 max_bw, rate;
+	u32 total = (u32)mode->htotal * mode->vtotal;
+	u64 bytes_pix;
 
-	/* Calculate maximum bandwidth, bytes per second */
 	switch (speed) {
 	case USB_SPEED_HIGH:
 		max_bw = FL2000_BULK_BW_HIGH_SPEED;
 		break;
 	case USB_SPEED_SUPER:
+	case USB_SPEED_SUPER_PLUS:
 		max_bw = FL2000_BULK_BW_SUPER_SPEED;
 		break;
-	case USB_SPEED_SUPER_PLUS:
-		max_bw = FL2000_BULK_BW_SUPER_SPEED_PLUS;
-		break;
 	default:
 		return 0;
 	}
 
-	/* Maximum bytes per pixel with maximum bandwidth */
-	bytes_pix = max_bw / pixclock;
-	switch (bytes_pix) {
-	case 0: /* Not enough */
-	case 1: /* RGB 332 not supported */
+	if (!total)
 		return 0;
-	case 2: /* RGB 565 */
-	case 3: /* RGB 888 */
-		break;
-	default:
-		bytes_pix = 3;
-		break;
-	}
 
-	return bytes_pix;
+	/* Active pixels per second; at most 500 MHz x 4000 x 4000, so no overflow */
+	rate = div_u64((u64)mode->clock * 1000 * mode->hdisplay * mode->vdisplay, total);
+	if (!rate)
+		return 0;
+
+	bytes_pix = div64_u64(max_bw, rate);
+	if (bytes_pix >= 3)
+		return 3; /* RGB888 */
+	if (bytes_pix == 2)
+		return 2; /* RGB565 */
+
+	/* RGB332 is not supported */
+	return 0;
 }
 
 struct fl2000_drm_if {
@@ -296,8 +304,8 @@ static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_PPM_ERR_MAX_VGA))
 		return MODE_BAD;
 
-	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, adjusted_mode.clock) == 0)
-		return MODE_BAD;
+	if (fl2000_get_bytes_pix(drm_if->usb_dev->speed, &adjusted_mode) == 0)
+		return MODE_CLOCK_HIGH;
 
 	return MODE_OK;
 }
@@ -466,7 +474,7 @@ static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_com
 		return ret;
 
 	/* The USB link must be able to carry the adjusted pixel clock */
-	if (!fl2000_get_bytes_pix(drm_if->usb_dev->speed, crtc_state->adjusted_mode.clock))
+	if (!fl2000_get_bytes_pix(drm_if->usb_dev->speed, &crtc_state->adjusted_mode))
 		return -EINVAL;
 
 	return 0;
@@ -502,7 +510,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	 */
 	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX_VGA)))
 		return;
-	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode->clock);
+	bytes_pix = fl2000_get_bytes_pix(usb_dev->speed, adjusted_mode);
 
 	drm_dbg_kms(drm, "Mode requested:  " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
 	drm_dbg_kms(drm, "Mode configured: " DRM_MODE_FMT "\n", DRM_MODE_ARG(adjusted_mode));
