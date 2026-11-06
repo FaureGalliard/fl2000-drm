@@ -167,7 +167,7 @@ struct fl2000_drm_if;
 struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct regmap *regmap,
 					struct i2c_adapter *adapter, struct drm_bridge *bridge);
 void fl2000_drm_destroy(struct fl2000_drm_if *drm_if);
-void fl2000_drm_hotplug(struct drm_device *drm);
+void fl2000_drm_hotplug(struct drm_device *drm, u32 events);
 int fl2000_drm_suspend(struct fl2000_drm_if *drm_if);
 int fl2000_drm_resume(struct fl2000_drm_if *drm_if);
 

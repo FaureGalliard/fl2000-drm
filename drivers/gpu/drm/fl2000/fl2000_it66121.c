@@ -20,8 +20,6 @@
 #define REVISION_MASK  0xF000
 #define REVISION_SHIFT 12
 
-#define IRQ_POLL_INTRVL 100
-
 /* How often, and how far apart, to look for the chip on the bus */
 #define IT66121_DETECT_TRIES	5
 #define IT66121_DETECT_DELAY_MS	50
@@ -31,9 +29,6 @@ struct it66121_priv {
 	struct i2c_client *client;
 	struct regmap *regmap;
 	struct drm_bridge bridge;
-
-	struct delayed_work work;
-	struct workqueue_struct *work_queue;
 
 	/* The chip was reset and its HDCP engine may be holding the DDC bus */
 	bool ddc_held;
@@ -255,13 +250,20 @@ int it66121_hpd_connected(struct drm_bridge *bridge)
 	return !!val;
 }
 
-/*
- * Acknowledge what is pending in the IT66121. Its interrupt line is routed to the FL2000, which
- * reports it on its own interrupt endpoint (see fl2000_interrupt.c); hotplug is handled from there,
- * by probing the connector. The interrupt sources themselves are not decoded here.
+/**
+ * it66121_ack_interrupts() - acknowledge what is pending in the IT66121
+ * @bridge: the IT66121 bridge
+ *
+ * Its interrupt line is routed to the FL2000, which reports it on its own interrupt endpoint (see
+ * fl2000_interrupt.c): called from there, and hotplug is handled by probing the connector. The
+ * interrupt sources themselves are not decoded here. An interrupt left pending would keep the line
+ * from changing again.
+ *
+ * Return: 0 on success, a negative error code otherwise
  */
-static int it66121_ack_interrupts(struct it66121_priv *priv)
+int it66121_ack_interrupts(struct drm_bridge *bridge)
 {
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 	unsigned int val;
 	int ret;
 
@@ -283,20 +285,6 @@ static int it66121_ack_interrupts(struct it66121_priv *priv)
 
 	/* Forced: when the bit happens to read as set, a plain update would not write it */
 	return regmap_field_force_write(priv->clr_irq, 1);
-}
-
-static void it66121_intr_work(struct work_struct *work_item)
-{
-	struct delayed_work *dwork = to_delayed_work(work_item);
-	struct it66121_priv *priv = container_of(dwork, struct it66121_priv, work);
-	int ret;
-
-	/* A failed read (the FL2000 is being reset, say) must not end the polling */
-	ret = it66121_ack_interrupts(priv);
-	if (ret)
-		dev_dbg(&priv->client->dev, "Cannot acknowledge interrupts (%d)\n", ret);
-
-	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 }
 
 /*
@@ -439,14 +427,14 @@ static void it66121_init_chip(struct it66121_priv *priv)
 }
 
 /*
- * Unmask the hot plug interrupt, the one that means something here, and start acknowledging the
- * chip's interrupts. DDC errors have nobody to read them: the DDC engine is not used.
+ * Unmask the hot plug interrupt, the one that means something here. DDC errors have nobody to read
+ * them: the DDC engine is not used.
  */
 static void it66121_start_interrupts(struct it66121_priv *priv)
 {
 	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC | IT66121_MASK_HPD,
 			  IT66121_MASK_DDC);
-	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
+	it66121_ack_interrupts(&priv->bridge);
 }
 
 static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *encoder,
@@ -472,30 +460,6 @@ static int it66121_bridge_attach(struct drm_bridge *bridge, struct drm_encoder *
 	drm_dbg_kms(bridge->dev, "Bridge attached\n");
 
 	return 0;
-}
-
-static void it66121_bridge_detach(struct drm_bridge *bridge)
-{
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	/*
-	 * Stop the HPD polling work started by attach so it cannot notify a
-	 * bridge that is no longer attached to a DRM device.
-	 */
-	cancel_delayed_work_sync(&priv->work);
-}
-
-/**
- * it66121_suspend() - stop talking to the IT66121 before system sleep
- * @bridge: the IT66121 bridge
- *
- * Its interrupt polling would only fail while the USB device sleeps.
- */
-void it66121_suspend(struct drm_bridge *bridge)
-{
-	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
-
-	cancel_delayed_work_sync(&priv->work);
 }
 
 /**
@@ -695,7 +659,6 @@ static void it66121_bridge_atomic_disable(struct drm_bridge *bridge,
 
 static const struct drm_bridge_funcs it66121_bridge_funcs = {
 	.attach = it66121_bridge_attach,
-	.detach = it66121_bridge_detach,
 	.atomic_create_state = drm_atomic_helper_bridge_create_state,
 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
@@ -803,9 +766,6 @@ void it66121_destroy(struct drm_bridge *bridge)
 
 	drm_bridge_unplug(bridge);
 
-	cancel_delayed_work_sync(&priv->work);
-	destroy_workqueue(priv->work_queue);
-
 	drm_edid_free(priv->drm_edid);
 	priv->drm_edid = NULL;
 
@@ -855,15 +815,6 @@ struct drm_bridge *it66121_create(struct i2c_adapter *adapter)
 		dev_err(&client->dev, "Cannot initialize registers (%d)\n", ret);
 		i2c_unregister_device(client);
 		return ERR_PTR(ret);
-	}
-
-	INIT_DELAYED_WORK(&priv->work, &it66121_intr_work);
-
-	/* Setup work queue for interrupt processing work */
-	priv->work_queue = alloc_ordered_workqueue("it66121_work", 0);
-	if (!priv->work_queue) {
-		i2c_unregister_device(client);
-		return ERR_PTR(-ENOMEM);
 	}
 
 	/*

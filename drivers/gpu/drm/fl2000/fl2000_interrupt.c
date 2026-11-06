@@ -87,14 +87,15 @@ int fl2000_intr_monitor_connected(struct fl2000_intr *intr)
 
 static void fl2000_intr_work(struct work_struct *work)
 {
-	u32 status;
+	u32 status, events;
 	struct fl2000_intr *intr = container_of(work, struct fl2000_intr, work);
 
 	if (fl2000_intr_read_status(intr, &status))
 		return;
 
-	if (atomic_xchg(&intr->events, 0))
-		fl2000_drm_hotplug(intr->drm);
+	events = atomic_xchg(&intr->events, 0);
+	if (events)
+		fl2000_drm_hotplug(intr->drm, events);
 }
 
 static void fl2000_intr_completion(struct urb *urb)

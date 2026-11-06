@@ -684,13 +684,21 @@ static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = 
 /**
  * fl2000_drm_hotplug() - tell userspace that a monitor came, went or changed
  * @drm: DRM device
+ * @events: the sink event bits of the status register that were seen
  *
- * Called from the interrupt work.
+ * Called from the interrupt work, which is stopped before the bridge goes away.
  */
-void fl2000_drm_hotplug(struct drm_device *drm)
+void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
 {
 	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(drm);
 	int idx;
+
+	if (events & FL2000_VGA_STATUS_HDMI_EVENT) {
+		int ret = it66121_ack_interrupts(drm_if->bridge);
+
+		if (ret)
+			drm_dbg_kms(drm, "Cannot acknowledge IT66121 interrupts (%d)\n", ret);
+	}
 
 	/* The device sends uevents only once it has been registered */
 	if (!smp_load_acquire(&drm_if->registered) || !drm_dev_enter(drm, &idx))
@@ -749,8 +757,6 @@ int fl2000_drm_suspend(struct fl2000_drm_if *drm_if)
 		drm_err(&drm_if->drm, "Cannot save the display state (%d)\n", ret);
 		fl2000_stream_disable(drm_if->stream);
 	}
-
-	it66121_suspend(drm_if->bridge);
 
 	return ret;
 }
