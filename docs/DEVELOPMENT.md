@@ -222,7 +222,7 @@ an unplug (see "Unplug and replug" for what Mutter does with that). Earlier
 suspends in the journal were all without the dongle, so the old behaviour with
 it was never observed.
 
-Now (commit bc351ed, to be tested on hardware):
+Now (commit bc351ed, verified on 5 Nov with `pm_test=devices` and a real S3 cycle in which the dongle was reset-resumed; the picture came back without errors):
 
 - the USB core calls the driver once per interface, the last first on
   suspend and in order on resume; `fl2000_drv.c` stops the display at the

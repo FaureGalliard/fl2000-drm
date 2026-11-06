@@ -295,9 +295,11 @@ that). Leave the dongle unplugged ~10 s first and verify with
    on 5 Nov `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR` with the
    mode programmed in `atomic_enable`, verified on hardware the same night
    (VGA and HDMI fine, `HDMI-A-2`/`VGA-1`, no warnings), and suspend/resume
-   with `reset_resume` (commit bc351ed, NOT yet tested: `systemctl suspend`
-   with the session open, then both outputs; the laptop uses S3 and resets
-   USB devices on wake)):
+   with `reset_resume` (commit bc351ed), verified on 5 Nov: `pm_test=devices`
+   and a real S3 suspend with GNOME open, the dongle was reset-resumed
+   (`reset SuperSpeed USB device`) and the picture came back at 60 sent/s
+   with no errors. On this HP the power LED blinks while asleep and a short
+   press of the power button wakes it; keys do not):
    - reuse the in-tree `ite-it66121` bridge (asked in the RFC cover letter)
    - no component framework (`drm_bridge_attach()` from probe), a single
      interface plus `usb_driver_claim_interface()`, DRM device parented to the
