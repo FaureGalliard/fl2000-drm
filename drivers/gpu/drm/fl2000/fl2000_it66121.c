@@ -256,34 +256,45 @@ int it66121_hpd_connected(struct drm_bridge *bridge)
 }
 
 /*
- * Acknowledges pending IT66121 interrupts. The IT66121 interrupt line is
- * routed to the FL2000, which reports it on its own interrupt endpoint (see
- * fl2000_interrupt.c); hotplug is handled from there, by re-probing the
- * connector. The interrupt sources themselves are not decoded here.
+ * Acknowledge what is pending in the IT66121. Its interrupt line is routed to the FL2000, which
+ * reports it on its own interrupt endpoint (see fl2000_interrupt.c); hotplug is handled from there,
+ * by probing the connector. The interrupt sources themselves are not decoded here.
  */
-static void it66121_intr_work(struct work_struct *work_item)
+static int it66121_ack_interrupts(struct it66121_priv *priv)
 {
-	int ret;
 	unsigned int val;
-	struct delayed_work *dwork = to_delayed_work(work_item);
-	struct it66121_priv *priv = container_of(dwork, struct it66121_priv, work);
-	struct device *dev = &priv->client->dev;
+	int ret;
 
 	ret = regmap_field_read(priv->irq_pending, &val);
-	if (ret) {
-		dev_err(dev, "Cannot read interrupt status (%d)\n", ret);
-		return;
-	}
+	if (ret || !val)
+		return ret;
 
+	ret = regmap_read(priv->regmap, IT66121_INT_STATUS_1, &val);
+	if (ret)
+		return ret;
+
+	/* The only two sources with the same bit in both registers, and the only ones unmasked */
+	val &= IT66121_INT_STATUS_1_HPD | IT66121_INT_STATUS_1_RX_SENSE;
 	if (val) {
-		ret = regmap_read(priv->regmap, IT66121_INT_STATUS_1, &val);
-		if (ret) {
-			dev_err(dev, "Cannot read IT66121_INT_STATUS_1 (%d)\n", ret);
-			return;
-		}
-
-		regmap_field_write(priv->clr_irq, 1);
+		ret = regmap_write(priv->regmap, IT66121_INT_CLEAR_1, val);
+		if (ret)
+			return ret;
 	}
+
+	/* Forced: when the bit happens to read as set, a plain update would not write it */
+	return regmap_field_force_write(priv->clr_irq, 1);
+}
+
+static void it66121_intr_work(struct work_struct *work_item)
+{
+	struct delayed_work *dwork = to_delayed_work(work_item);
+	struct it66121_priv *priv = container_of(dwork, struct it66121_priv, work);
+	int ret;
+
+	/* A failed read (the FL2000 is being reset, say) must not end the polling */
+	ret = it66121_ack_interrupts(priv);
+	if (ret)
+		dev_dbg(&priv->client->dev, "Cannot acknowledge interrupts (%d)\n", ret);
 
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 }
@@ -427,10 +438,14 @@ static void it66121_init_chip(struct it66121_priv *priv)
 	priv->ddc_held = true;
 }
 
-/* Unmask the DDC interrupt and start acknowledging the chip's interrupts */
+/*
+ * Unmask the hot plug interrupt, the one that means something here, and start acknowledging the
+ * chip's interrupts. DDC errors have nobody to read them: the DDC engine is not used.
+ */
 static void it66121_start_interrupts(struct it66121_priv *priv)
 {
-	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC, 0);
+	regmap_write_bits(priv->regmap, IT66121_INT_MASK_1, IT66121_MASK_DDC | IT66121_MASK_HPD,
+			  IT66121_MASK_DDC);
 	queue_delayed_work(priv->work_queue, &priv->work, msecs_to_jiffies(IRQ_POLL_INTRVL));
 }
 
@@ -474,7 +489,7 @@ static void it66121_bridge_detach(struct drm_bridge *bridge)
  * it66121_suspend() - stop talking to the IT66121 before system sleep
  * @bridge: the IT66121 bridge
  *
- * Its interrupt polling would fail while the USB device sleeps, and a failed read ends it.
+ * Its interrupt polling would only fail while the USB device sleeps.
  */
 void it66121_suspend(struct drm_bridge *bridge)
 {
