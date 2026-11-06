@@ -20,9 +20,6 @@
  */
 #define FL2000_VGA_MAX_CLOCK 165000
 
-/* The first probes of a connection retry the EDID, in case the monitor is still waking up */
-#define FL2000_VGA_EDID_TRIES 3
-
 /* Offered as the preferred mode when there is no EDID: any VGA monitor takes it */
 #define FL2000_VGA_FALLBACK_WIDTH  1024
 #define FL2000_VGA_FALLBACK_HEIGHT 768
@@ -87,45 +84,27 @@ static int fl2000_vga_detect_ctx(struct drm_connector *connector,
 	if (status == connector_status_unknown)
 		/* An unreadable status says nothing: keep what userspace was told */
 		status = connector->status;
-	else if (status != connector_status_connected)
-		/* Whatever comes next may be another monitor: its EDID must be read again */
-		WRITE_ONCE(vga->edid_stale, true);
 
 	drm_dev_exit(idx);
 
 	return status;
 }
 
-/*
- * The EDID is read through the FL2000 I2C engine. It is kept for as long as the monitor stays, and
- * only a few probes try for it: a read that finds nothing is quick, but old monitors often do not
- * answer DDC at all, and every probe runs with the mode config locked.
- */
+/* The EDID is read through the FL2000 I2C engine */
 static int fl2000_vga_get_modes(struct drm_connector *connector)
 {
 	struct fl2000_vga *vga = to_fl2000_vga(connector);
+	const struct drm_edid *drm_edid;
 	int count = 0, idx;
 
 	if (!drm_dev_enter(connector->dev, &idx))
 		return 0;
 
-	if (fl2000_intr_sink_changed(vga->intr) || READ_ONCE(vga->edid_stale)) {
-		WRITE_ONCE(vga->edid_stale, false);
-		drm_edid_free(vga->edid);
-		vga->edid = NULL;
-		vga->edid_tries = 0;
-	}
-
-	if (!vga->edid && vga->edid_tries < FL2000_VGA_EDID_TRIES) {
-		vga->edid_tries++;
-		vga->edid = drm_edid_read_custom(connector, fl2000_vga_read_block, vga);
-		drm_dbg_kms(connector->dev, "VGA EDID read %s (try %u)\n",
-			    vga->edid ? "ok" : "failed", vga->edid_tries);
-	}
-
-	drm_edid_connector_update(connector, vga->edid);
-	if (vga->edid)
+	drm_edid = drm_edid_read_custom(connector, fl2000_vga_read_block, vga);
+	drm_edid_connector_update(connector, drm_edid);
+	if (drm_edid)
 		count = drm_edid_connector_add_modes(connector);
+	drm_edid_free(drm_edid);
 
 	if (!count) {
 		/*
@@ -174,22 +153,10 @@ static const struct drm_encoder_helper_funcs fl2000_vga_encoder_helper_funcs = {
 	.mode_valid = fl2000_vga_encoder_mode_valid,
 };
 
-/**
- * fl2000_vga_sink_event() - a monitor may have appeared, gone away or changed EDID
- * @vga: VGA output
- *
- * Called after system sleep. The EDID is read again by the next probe.
- */
-void fl2000_vga_sink_event(struct fl2000_vga *vga)
-{
-	WRITE_ONCE(vga->edid_stale, true);
-}
-
 static void fl2000_vga_release(struct drm_device *drm, void *res)
 {
 	struct fl2000_vga *vga = res;
 
-	drm_edid_free(vga->edid);
 	drm_bridge_put(vga->hdmi_bridge);
 }
 

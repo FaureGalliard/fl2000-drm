@@ -700,9 +700,6 @@ int fl2000_drm_resume(struct fl2000_drm_if *drm_if)
 	/* Without interrupts the connectors are still polled */
 	fl2000_intr_resume(drm_if->intr);
 
-	/* Another monitor may have been plugged in meanwhile */
-	fl2000_vga_sink_event(&drm_if->vga);
-
 	/* There is nothing to restore if saving the state failed */
 	if (drm_if->drm.mode_config.suspend_state) {
 		ret = drm_mode_config_helper_resume(&drm_if->drm);

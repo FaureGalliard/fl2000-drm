@@ -19,8 +19,6 @@ struct fl2000_intr {
 	struct workqueue_struct *work_queue;
 	/* Sink events read by anyone, not yet reported to userspace */
 	atomic_t events;
-	/* Read by anyone since the last call of fl2000_intr_sink_changed(): the monitor changed */
-	atomic_t sink_changed;
 };
 
 #define FL2000_SINK_EVENTS (FL2000_VGA_STATUS_HDMI_EVENT | FL2000_VGA_STATUS_MONITOR_EVENT | \
@@ -39,24 +37,8 @@ static int fl2000_intr_read_status(struct fl2000_intr *intr, u32 *status)
 		return ret;
 
 	atomic_or(*status & FL2000_SINK_EVENTS, &intr->events);
-	if (*status & (FL2000_VGA_STATUS_MONITOR_EVENT | FL2000_VGA_STATUS_EDID_EVENT))
-		atomic_set(&intr->sink_changed, 1);
 
 	return 0;
-}
-
-/**
- * fl2000_intr_sink_changed() - has the chip reported a monitor change since the last call
- * @intr: interrupt context
- *
- * Asked whenever the EDID is about to be used. The answer does not depend on who read the status
- * first: the connector detection, or the interrupt work and whether userspace was there yet.
- *
- * Return: true if the EDID must be read again
- */
-bool fl2000_intr_sink_changed(struct fl2000_intr *intr)
-{
-	return atomic_xchg(&intr->sink_changed, 0);
 }
 
 /**
@@ -158,7 +140,6 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct regmap
 	intr->drm = drm;
 	INIT_WORK(&intr->work, &fl2000_intr_work);
 	atomic_set(&intr->events, 0);
-	atomic_set(&intr->sink_changed, 0);
 
 	ret = -ENOMEM;
 	intr->urb = usb_alloc_urb(0, GFP_KERNEL);

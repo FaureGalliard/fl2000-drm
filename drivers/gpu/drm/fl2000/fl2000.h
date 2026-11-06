@@ -108,11 +108,9 @@ void fl2000_intr_quiesce(struct fl2000_intr *intr);
 void fl2000_intr_suspend(struct fl2000_intr *intr);
 int fl2000_intr_resume(struct fl2000_intr *intr);
 int fl2000_intr_monitor_connected(struct fl2000_intr *intr);
-bool fl2000_intr_sink_changed(struct fl2000_intr *intr);
 void fl2000_intr_destroy(struct fl2000_intr *intr);
 
 /* VGA output: a DAC encoder and connector next to the HDMI ones, on the same CRTC */
-struct drm_edid;
 struct fl2000_vga {
 	struct drm_encoder encoder;
 	struct drm_connector connector;
@@ -120,17 +118,11 @@ struct fl2000_vga {
 	struct fl2000_intr *intr;
 	/* The HDMI transmitter shares the chip's monitor sense with this output */
 	struct drm_bridge *hdmi_bridge;
-	/* EDID of the monitor, kept for as long as it stays connected; NULL if it has none */
-	const struct drm_edid *edid;
-	unsigned int edid_tries;
-	/* The monitor changed or went away: read the EDID again on the next probe */
-	bool edid_stale;
 };
 
 int fl2000_vga_init(struct drm_device *drm, struct fl2000_vga *vga, struct drm_crtc *crtc,
 		    struct drm_encoder *hdmi_encoder, struct i2c_adapter *adapter,
 		    struct fl2000_intr *intr);
-void fl2000_vga_sink_event(struct fl2000_vga *vga);
 
 /* I2C adapter interface creation */
 struct i2c_adapter *fl2000_i2c_init(struct usb_interface *interface, struct regmap *regmap);

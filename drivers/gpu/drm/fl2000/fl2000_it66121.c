@@ -32,15 +32,10 @@ struct it66121_priv {
 
 	/* The chip was reset and its HDCP engine may be holding the DDC bus */
 	bool ddc_held;
-	/* Set when the monitor went away: the cached EDID is no longer valid */
-	bool edid_stale;
 
 	struct regmap_field *irq_pending;
 	struct regmap_field *hpd;
 	struct regmap_field *clr_irq;
-
-	/* EDID of the monitor, kept for as long as it stays; NULL if it could not be read */
-	const struct drm_edid *drm_edid;
 };
 
 static const struct regmap_range_cfg it66121_regmap_banks[] = {
@@ -306,22 +301,6 @@ static int it66121_get_edid_block(void *context, u8 *buf, unsigned int block, si
 	return ret;
 }
 
-static void it66121_read_edid(struct it66121_priv *priv, struct drm_connector *connector)
-{
-	int ret;
-
-	if (priv->ddc_held) {
-		/* Not fatal: the read tells whether the bus is free */
-		ret = it66121_release_ddc(priv);
-		if (ret)
-			dev_dbg(&priv->client->dev, "Cannot release the DDC bus (%d)\n", ret);
-		priv->ddc_held = false;
-	}
-
-	drm_edid_free(priv->drm_edid);
-	priv->drm_edid = drm_edid_read_custom(connector, it66121_get_edid_block, priv);
-}
-
 static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge,
 						       struct drm_connector *connector)
 {
@@ -335,9 +314,6 @@ static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge
 	if (ret == -ENODEV)
 		return connector_status_disconnected;
 
-	/* Whatever comes next may be another monitor: its EDID must be read again */
-	WRITE_ONCE(priv->edid_stale, true);
-
 	if (ret < 0) {
 		/* Not bridge->dev: the chip, not the DRM device, failed to answer */
 		dev_err_ratelimited(&priv->client->dev, "Cannot get monitor status (%d)\n", ret);
@@ -347,30 +323,28 @@ static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge
 	return connector_status_disconnected;
 }
 
-/*
- * Reading the EDID takes about a second over USB, and the connector asks for it on every probe,
- * with the mode config locked: keep it until the monitor goes away (see it66121_bridge_detect())
- * and hand out copies. It must still be handed over every time: the DRM core drops the
- * connector's copy when the connector goes through 'disconnected'.
- */
 static const struct drm_edid *it66121_bridge_edid_read(struct drm_bridge *bridge,
 						       struct drm_connector *connector)
 {
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 	const struct drm_edid *drm_edid;
-	int idx;
+	int idx, ret;
 
 	if (!drm_bridge_enter(bridge, &idx))
 		return NULL;
 
-	if (!priv->drm_edid || READ_ONCE(priv->edid_stale)) {
-		WRITE_ONCE(priv->edid_stale, false);
-		it66121_read_edid(priv, connector);
-		if (!priv->drm_edid)
-			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
+	if (priv->ddc_held) {
+		/* Not fatal: the read tells whether the bus is free */
+		ret = it66121_release_ddc(priv);
+		if (ret)
+			dev_dbg(&priv->client->dev, "Cannot release the DDC bus (%d)\n", ret);
+		priv->ddc_held = false;
 	}
 
-	drm_edid = drm_edid_dup(priv->drm_edid);
+	drm_edid = drm_edid_read_custom(connector, it66121_get_edid_block, priv);
+	if (!drm_edid)
+		dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
+
 	drm_bridge_exit(idx);
 
 	return drm_edid;
@@ -478,9 +452,6 @@ void it66121_resume(struct drm_bridge *bridge)
 	regcache_drop_region(priv->regmap, 0, it66121_regmap_config.max_register);
 	it66121_init_chip(priv);
 	it66121_start_interrupts(priv);
-
-	/* Another monitor may have been plugged in meanwhile */
-	WRITE_ONCE(priv->edid_stale, true);
 }
 
 /*
@@ -765,9 +736,6 @@ void it66121_destroy(struct drm_bridge *bridge)
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
 	drm_bridge_unplug(bridge);
-
-	drm_edid_free(priv->drm_edid);
-	priv->drm_edid = NULL;
 
 	/*
 	 * Releases what is managed on the client, its regmap included, and drops the devm reference
