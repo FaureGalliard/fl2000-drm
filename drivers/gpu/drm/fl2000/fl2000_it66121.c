@@ -242,9 +242,13 @@ int it66121_hpd_connected(struct drm_bridge *bridge)
 {
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 	unsigned int val;
-	int ret;
+	int idx, ret;
+
+	if (!drm_bridge_enter(bridge, &idx))
+		return -ENODEV;
 
 	ret = regmap_field_read(priv->hpd, &val);
+	drm_bridge_exit(idx);
 	if (ret)
 		return ret;
 
@@ -263,7 +267,6 @@ static void it66121_intr_work(struct work_struct *work_item)
 	unsigned int val;
 	struct delayed_work *dwork = to_delayed_work(work_item);
 	struct it66121_priv *priv = container_of(dwork, struct it66121_priv, work);
-	/* Do not use bridge.dev here: it is NULL while the bridge is detached */
 	struct device *dev = &priv->client->dev;
 
 	ret = regmap_field_read(priv->irq_pending, &val);
@@ -329,6 +332,10 @@ static enum drm_connector_status it66121_bridge_detect(struct drm_bridge *bridge
 	if (ret > 0)
 		return connector_status_connected;
 
+	/* Gone with the USB device */
+	if (ret == -ENODEV)
+		return connector_status_disconnected;
+
 	/* Whatever comes next may be another monitor: its EDID must be read again */
 	WRITE_ONCE(priv->edid_stale, true);
 
@@ -351,6 +358,11 @@ static const struct drm_edid *it66121_bridge_edid_read(struct drm_bridge *bridge
 						       struct drm_connector *connector)
 {
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+	const struct drm_edid *drm_edid;
+	int idx;
+
+	if (!drm_bridge_enter(bridge, &idx))
+		return NULL;
 
 	if (!priv->drm_edid || READ_ONCE(priv->edid_stale)) {
 		WRITE_ONCE(priv->edid_stale, false);
@@ -359,46 +371,11 @@ static const struct drm_edid *it66121_bridge_edid_read(struct drm_bridge *bridge
 			dev_warn(&priv->client->dev, "EDID read failed, using fallback modes\n");
 	}
 
-	return drm_edid_dup(priv->drm_edid);
+	drm_edid = drm_edid_dup(priv->drm_edid);
+	drm_bridge_exit(idx);
+
+	return drm_edid;
 }
-
-static int it66121_bind(struct device *comp, struct device *master, void *master_data)
-{
-	int ret;
-	struct drm_bridge *bridge = dev_get_drvdata(comp);
-	struct drm_device *drm = master_data;
-	struct i2c_adapter *adapter = i2c_verify_adapter(master);
-	struct drm_encoder *encoder;
-
-	if (!adapter)
-		return -ENODEV;
-
-	/* The FL2000 has a single encoder */
-	encoder = list_first_entry_or_null(&drm->mode_config.encoder_list, struct drm_encoder,
-					   head);
-	if (!encoder)
-		return -ENODEV;
-
-	dev_dbg(comp, "Binding IT66121 component\n");
-
-	/* The display driver makes the connector, from what the bridge reports */
-	ret = drm_bridge_attach(encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
-	if (ret)
-		dev_err(comp, "Cannot attach IT66121 bridge (%d)\n", ret);
-
-	return ret;
-}
-
-static void it66121_unbind(struct device *comp, struct device *master, void *master_data)
-{
-	/* The bridge is detached by the DRM core when the encoder is cleaned up */
-	dev_dbg(comp, "Unbinding IT66121 component\n");
-}
-
-static const struct component_ops it66121_component_ops = {
-	.bind = it66121_bind,
-	.unbind = it66121_unbind,
-};
 
 /*
  * Bring the transmitter out of reset into a known state, as the IT66121 manual and the vendor
@@ -660,6 +637,7 @@ static void it66121_bridge_atomic_enable(struct drm_bridge *bridge,
 	const struct drm_connector_state *conn_state;
 	const struct drm_crtc_state *crtc_state;
 	struct drm_connector *connector;
+	int idx;
 
 	connector = drm_atomic_get_new_connector_for_encoder(state, bridge->encoder);
 	if (WARN_ON(!connector))
@@ -673,23 +651,31 @@ static void it66121_bridge_atomic_enable(struct drm_bridge *bridge,
 	if (WARN_ON(!crtc_state))
 		return;
 
+	if (!drm_bridge_enter(bridge, &idx))
+		return;
+
 	it66121_set_mode(priv, connector, &crtc_state->mode);
 
 	/* Unmute AV */
 	regmap_write(priv->regmap, IT66121_HDMI_AV_MUTE, 0);
+
+	drm_bridge_exit(idx);
 }
 
 static void it66121_bridge_atomic_disable(struct drm_bridge *bridge,
 					  struct drm_atomic_commit *state)
 {
-	int ret;
 	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
+	int idx;
+
+	if (!drm_bridge_enter(bridge, &idx))
+		return;
 
 	/* Mute AV */
-	ret = regmap_write_bits(priv->regmap, IT66121_HDMI_AV_MUTE, IT66121_HDMI_AV_MUTE_ON,
-				IT66121_HDMI_AV_MUTE_ON);
-	if (ret)
-		return;
+	regmap_write_bits(priv->regmap, IT66121_HDMI_AV_MUTE, IT66121_HDMI_AV_MUTE_ON,
+			  IT66121_HDMI_AV_MUTE_ON);
+
+	drm_bridge_exit(idx);
 }
 
 static const struct drm_bridge_funcs it66121_bridge_funcs = {
@@ -789,36 +775,39 @@ static struct i2c_client *it66121_i2c_init(struct i2c_adapter *adapter)
 	return client;
 }
 
-void it66121_destroy(struct i2c_client *client)
+/**
+ * it66121_destroy() - remove the bridge
+ * @bridge: the IT66121 bridge
+ *
+ * A DRM device that userspace keeps open still has the bridge in its encoder's chain, and frees it
+ * with the last reference, but nothing gets past drm_bridge_enter() any more.
+ */
+void it66121_destroy(struct drm_bridge *bridge)
 {
-	struct drm_bridge *bridge;
-	struct it66121_priv *priv;
+	struct it66121_priv *priv = container_of(bridge, struct it66121_priv, bridge);
 
-	if (!client)
-		return;
-
-	bridge = dev_get_drvdata(&client->dev);
-	priv = container_of(bridge, struct it66121_priv, bridge);
+	drm_bridge_unplug(bridge);
 
 	cancel_delayed_work_sync(&priv->work);
-
 	destroy_workqueue(priv->work_queue);
-
-	component_del(&priv->client->dev, &it66121_component_ops);
 
 	drm_edid_free(priv->drm_edid);
 	priv->drm_edid = NULL;
 
-	drm_bridge_remove(&priv->bridge);
-
 	/*
-	 * Drops the devm reference to the bridge; priv is freed together with
-	 * the bridge once DRM releases the remaining references.
+	 * Releases what is managed on the client, its regmap included, and drops the devm reference
+	 * to the bridge.
 	 */
 	i2c_unregister_device(priv->client);
 }
 
-struct i2c_client *it66121_create(struct i2c_adapter *adapter)
+/**
+ * it66121_create() - find the IT66121 on the FL2000 I2C bus and make a bridge of it
+ * @adapter: the FL2000 I2C adapter
+ *
+ * Return: the bridge, to attach to the encoder, or an ERR_PTR() on failure
+ */
+struct drm_bridge *it66121_create(struct i2c_adapter *adapter)
 {
 	int ret;
 	struct it66121_priv *priv;
@@ -855,6 +844,13 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 
 	INIT_DELAYED_WORK(&priv->work, &it66121_intr_work);
 
+	/* Setup work queue for interrupt processing work */
+	priv->work_queue = alloc_ordered_workqueue("it66121_work", 0);
+	if (!priv->work_queue) {
+		i2c_unregister_device(client);
+		return ERR_PTR(-ENOMEM);
+	}
+
 	/*
 	 * The chip's interrupt reaches the host only through the FL2000's, which sends a hotplug
 	 * event for the whole device (fl2000_drm_hotplug()). The bridge therefore reports no hot
@@ -865,26 +861,5 @@ struct i2c_client *it66121_create(struct i2c_adapter *adapter)
 
 	drm_bridge_add(&priv->bridge);
 
-	/* Setup work queue for interrupt processing work */
-	priv->work_queue = alloc_ordered_workqueue("it66121_work", 0);
-	if (!priv->work_queue) {
-		drm_bridge_remove(&priv->bridge);
-		i2c_unregister_device(client);
-		return ERR_PTR(-ENOMEM);
-	}
-
-	/* Store bridge pointer at I2C client device for further binding */
-	dev_set_drvdata(&priv->client->dev, &priv->bridge);
-
-	/* Bind component of I2C client to master I2C adapter */
-	ret = component_add(&priv->client->dev, &it66121_component_ops);
-	if (ret) {
-		dev_err(&client->dev, "Cannot register IT66121 component (%d)\n", ret);
-		destroy_workqueue(priv->work_queue);
-		drm_bridge_remove(&priv->bridge);
-		i2c_unregister_device(client);
-		return ERR_PTR(ret);
-	}
-
-	return client;
+	return &priv->bridge;
 }

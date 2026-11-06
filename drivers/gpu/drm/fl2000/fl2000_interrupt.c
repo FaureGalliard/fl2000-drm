@@ -10,6 +10,7 @@
 
 struct fl2000_intr {
 	struct usb_device *usb_dev;
+	struct regmap *regmap;
 	struct drm_device *drm;
 	struct urb *urb;
 	u8 *buf;
@@ -33,7 +34,7 @@ static int fl2000_intr_read_status(struct fl2000_intr *intr, u32 *status)
 {
 	int ret;
 
-	ret = fl2000_read_status(intr->usb_dev, status);
+	ret = fl2000_read_status(intr->regmap, status);
 	if (ret)
 		return ret;
 
@@ -78,7 +79,7 @@ int fl2000_intr_monitor_connected(struct fl2000_intr *intr)
 	if (ret)
 		return ret;
 
-	if (fl2000_force_connect_active(intr->usb_dev))
+	if (fl2000_force_connect_active(intr->regmap))
 		return 0;
 
 	return !!(status & FL2000_VGA_STATUS_MONITOR_STATUS);
@@ -94,19 +95,6 @@ static void fl2000_intr_work(struct work_struct *work)
 
 	if (atomic_xchg(&intr->events, 0))
 		fl2000_drm_hotplug(intr->drm);
-}
-
-static void fl2000_intr_release(struct device *dev, void *res)
-{
-	struct fl2000_intr *intr = res;
-	struct usb_device *usb_dev = to_usb_device(dev);
-
-	usb_poison_urb(intr->urb);
-	cancel_work_sync(&intr->work);
-	if (intr->work_queue)
-		destroy_workqueue(intr->work_queue);
-	usb_free_coherent(usb_dev, INTR_BUFSIZE, intr->buf, intr->transfer_dma);
-	usb_free_urb(intr->urb);
 }
 
 static void fl2000_intr_completion(struct urb *urb)
@@ -135,13 +123,15 @@ static void fl2000_intr_completion(struct urb *urb)
 /**
  * fl2000_intr_create() - interrupt processing context creation
  * @usb_dev: FL2000 USB device
+ * @regmap: FL2000 registers
  * @drm: DRM device that receives the hotplug events
  *
- * Called on DRM master bind. Starts polling the interrupt endpoint.
+ * Called when the DRM device is set up. Starts polling the interrupt endpoint.
  *
  * Return: interrupt context, or an ERR_PTR() on failure
  */
-struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_device *drm)
+struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct regmap *regmap,
+				       struct drm_device *drm)
 {
 	int ret;
 	struct fl2000_intr *intr;
@@ -158,34 +148,29 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 		return ERR_PTR(ret);
 	}
 
-	intr = devres_alloc(&fl2000_intr_release, sizeof(*intr), GFP_KERNEL);
+	intr = kzalloc_obj(*intr);
 	if (!intr)
 		return ERR_PTR(-ENOMEM);
-	devres_add(&usb_dev->dev, intr);
 
 	intr->usb_dev = usb_dev;
+	intr->regmap = regmap;
 	intr->drm = drm;
 	INIT_WORK(&intr->work, &fl2000_intr_work);
 	atomic_set(&intr->events, 0);
 	atomic_set(&intr->sink_changed, 0);
 
+	ret = -ENOMEM;
 	intr->urb = usb_alloc_urb(0, GFP_KERNEL);
-	if (!intr->urb) {
-		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
-		return ERR_PTR(-ENOMEM);
-	}
+	if (!intr->urb)
+		goto err_destroy;
 
 	intr->buf = usb_alloc_coherent(usb_dev, INTR_BUFSIZE, GFP_KERNEL, &intr->transfer_dma);
-	if (!intr->buf) {
-		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
-		return ERR_PTR(-ENOMEM);
-	}
+	if (!intr->buf)
+		goto err_destroy;
 
 	intr->work_queue = alloc_ordered_workqueue("fl2000_interrupt", 0);
-	if (!intr->work_queue) {
-		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
-		return ERR_PTR(-ENOMEM);
-	}
+	if (!intr->work_queue)
+		goto err_destroy;
 
 	/* Interrupt URB configuration is static, including allocated buffer */
 	usb_fill_int_urb(intr->urb, usb_dev, usb_rcvintpipe(usb_dev, usb_endpoint_num(desc)),
@@ -197,11 +182,15 @@ struct fl2000_intr *fl2000_intr_create(struct usb_device *usb_dev, struct drm_de
 	ret = usb_submit_urb(intr->urb, GFP_KERNEL);
 	if (ret) {
 		dev_err(&usb_dev->dev, "URB submission failed (%d)\n", ret);
-		devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
-		return ERR_PTR(ret);
+		goto err_destroy;
 	}
 
 	return intr;
+
+err_destroy:
+	fl2000_intr_destroy(intr);
+
+	return ERR_PTR(ret);
 }
 
 /**
@@ -247,7 +236,13 @@ int fl2000_intr_resume(struct fl2000_intr *intr)
 	return ret;
 }
 
-void fl2000_intr_destroy(struct usb_device *usb_dev)
+void fl2000_intr_destroy(struct fl2000_intr *intr)
 {
-	devres_release(&usb_dev->dev, fl2000_intr_release, NULL, NULL);
+	usb_poison_urb(intr->urb);
+	cancel_work_sync(&intr->work);
+	if (intr->work_queue)
+		destroy_workqueue(intr->work_queue);
+	usb_free_coherent(intr->usb_dev, INTR_BUFSIZE, intr->buf, intr->transfer_dma);
+	usb_free_urb(intr->urb);
+	kfree(intr);
 }

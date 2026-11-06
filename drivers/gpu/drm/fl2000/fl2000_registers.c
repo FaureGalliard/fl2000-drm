@@ -77,9 +77,8 @@ static const struct regmap_config fl2000_regmap_config = {
 	.use_single_write = true,
 };
 
-int fl2000_set_pll(struct usb_device *usb_dev, struct fl2000_pll *pll)
+int fl2000_set_pll(struct regmap *regmap, struct fl2000_pll *pll)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	u32 val;
 
 	val = FIELD_PREP(FL2000_VGA_PLL_PRESCALER, pll->prescaler) |
@@ -100,9 +99,8 @@ int fl2000_set_pll(struct usb_device *usb_dev, struct fl2000_pll *pll)
  * is driven: it hides the cable being unplugged, and with it clear the chip powers its DAC and PLL
  * by itself whenever it senses a monitor.
  */
-int fl2000_force_connect(struct usb_device *usb_dev, bool force)
+int fl2000_force_connect(struct regmap *regmap, bool force)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	return regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
 				 FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT,
@@ -110,17 +108,15 @@ int fl2000_force_connect(struct usb_device *usb_dev, bool force)
 }
 
 /* Is the chip's monitor sense forced on: then it does not follow any cable */
-bool fl2000_force_connect_active(struct usb_device *usb_dev)
+bool fl2000_force_connect_active(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	return regmap_test_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
 				FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT) > 0;
 }
 
-int fl2000_set_timings(struct usb_device *usb_dev, struct fl2000_timings *timings)
+int fl2000_set_timings(struct regmap *regmap, struct fl2000_timings *timings)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	regmap_write(regmap, FL2000_VGA_HSYNC_REG1,
 		     FIELD_PREP(FL2000_VGA_HSYNC1_HACTIVE, timings->hactive) |
@@ -142,9 +138,8 @@ int fl2000_set_timings(struct usb_device *usb_dev, struct fl2000_timings *timing
 	return 0;
 }
 
-int fl2000_set_pixfmt(struct usb_device *usb_dev, u32 bytes_pix)
+int fl2000_set_pixfmt(struct regmap *regmap, u32 bytes_pix)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	u32 mask, val;
 
 	mask = FL2000_VGA_CTRL_PXCLK_DAC_OUTPUT_EN | FL2000_VGA_CTRL_PXCLK_DROP_CNT |
@@ -159,9 +154,8 @@ int fl2000_set_pixfmt(struct usb_device *usb_dev, u32 bytes_pix)
 	return 0;
 }
 
-int fl2000_set_transfers(struct usb_device *usb_dev)
+int fl2000_set_transfers(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	u32 mask;
 
 	mask = FL2000_VGA_CTRL_ACLK_USE_PKT_PENDING | FL2000_VGA_CTRL_ACLK_USE_ZERO_TD |
@@ -174,9 +168,8 @@ int fl2000_set_transfers(struct usb_device *usb_dev)
 	return 0;
 }
 
-int fl2000_reset(struct usb_device *usb_dev)
+int fl2000_reset(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	regmap_write_bits(regmap, FL2000_RST_CTRL_REG, FL2000_RST_CTRL_SW_RESET,
 			  FL2000_RST_CTRL_SW_RESET);
@@ -186,18 +179,16 @@ int fl2000_reset(struct usb_device *usb_dev)
 	return 0;
 }
 
-int fl2000_afe_magic(struct usb_device *usb_dev)
+int fl2000_afe_magic(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	regmap_write_bits(regmap, FL2000_USB_LPM_REG, FL2000_USB_LPM_MAGIC, FL2000_USB_LPM_MAGIC);
 
 	return 0;
 }
 
-int fl2000_usb_magic(struct usb_device *usb_dev)
+int fl2000_usb_magic(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	u32 val;
 
 	val = FL2000_VGA_I2C_SC_MONITOR_DETECT | FL2000_VGA_I2C_SC_EDID_DETECT;
@@ -214,9 +205,8 @@ int fl2000_usb_magic(struct usb_device *usb_dev)
 }
 
 /* The interrupts about monitors: they matter from the moment the device is up, mode or no mode */
-int fl2000_enable_sink_interrupts(struct usb_device *usb_dev)
+int fl2000_enable_sink_interrupts(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN,
 			  FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN);
@@ -228,25 +218,23 @@ int fl2000_enable_sink_interrupts(struct usb_device *usb_dev)
 }
 
 /* All of them, for while a frame is being sent */
-int fl2000_enable_interrupts(struct usb_device *usb_dev)
+int fl2000_enable_interrupts(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	u32 mask, val;
 
 	val = FL2000_VGA_CTRL_ACLK_VGA_ERR_INT_EN | FL2000_VGA_CTRL_ACLK_LBUF_ERR_INT_EN;
 	mask = val | FL2000_VGA_CTRL_ACLK_FEEDBACK_INT_EN;
 	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, mask, val);
 
-	return fl2000_enable_sink_interrupts(usb_dev);
+	return fl2000_enable_sink_interrupts(regmap);
 }
 
 /*
  * Read the status register. Its event bits clear on read, so whoever reads it owns the events it
  * returns: callers must not drop them.
  */
-int fl2000_read_status(struct usb_device *usb_dev, u32 *status)
+int fl2000_read_status(struct regmap *regmap, u32 *status)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 	unsigned int val;
 	int ret;
 
@@ -268,12 +256,11 @@ int fl2000_read_status(struct usb_device *usb_dev, u32 *status)
 	return 0;
 }
 
-int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset, u32 *data)
+int fl2000_i2c_dword(struct regmap *regmap, bool read, u16 addr, u8 offset, u32 *data)
 {
 	int ret;
 	unsigned int val;
 	u32 mask;
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	if (!read) {
 		ret = regmap_write(regmap, FL2000_VGA_I2C_WR_REG, *data);
@@ -322,20 +309,13 @@ int fl2000_i2c_dword(struct usb_device *usb_dev, bool read, u16 addr, u8 offset,
  * The chip may have lost power (system sleep): forget the cached registers, so that the
  * read-modify-write updates that follow read the chip instead of skipping writes it still needs.
  */
-void fl2000_regmap_drop_cache(struct usb_device *usb_dev)
+void fl2000_regmap_drop_cache(struct regmap *regmap)
 {
-	struct regmap *regmap = dev_get_regmap(&usb_dev->dev, NULL);
 
 	regcache_drop_region(regmap, 0, fl2000_regmap_config.max_register);
 }
 
-struct regmap *fl2000_regmap_init(struct usb_device *usb_dev)
+struct regmap *fl2000_regmap_init(struct device *dev, struct usb_device *usb_dev)
 {
-	struct regmap *regmap;
-
-	regmap = devm_regmap_init(&usb_dev->dev, NULL, usb_dev, &fl2000_regmap_config);
-	if (IS_ERR(regmap))
-		dev_err(&usb_dev->dev, "Registers map failed (%pe)\n", regmap);
-
-	return regmap;
+	return devm_regmap_init(dev, NULL, usb_dev, &fl2000_regmap_config);
 }

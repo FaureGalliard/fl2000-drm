@@ -270,19 +270,6 @@ error:
 	return ret;
 }
 
-static void fl2000_stream_release(struct device *dev, void *res)
-{
-	struct fl2000_stream *stream = res;
-
-	fl2000_stream_disable(stream);
-	destroy_workqueue(stream->work_queue);
-	fl2000_stream_put_buffers(stream);
-	vfree(stream->shadow);
-	kfree(stream->cursor_argb);
-	kfree(stream->line_buf);
-	mutex_destroy(&stream->shadow_lock);
-}
-
 static void fl2000_stream_data_completion(struct urb *urb)
 {
 	struct fl2000_stream_buf *cur_sb = urb->context;
@@ -956,8 +943,8 @@ void fl2000_stream_disable(struct fl2000_stream *stream)
  * fl2000_stream_create() - streaming processing context creation
  * @usb_dev: FL2000 USB device
  *
- * Called on DRM master bind. It shall not initiate any USB transfers: buffers
- * and URBs are allocated later, once the mode (and thus the frame size) is
+ * Called when the DRM device is set up. It shall not initiate any USB transfers:
+ * buffers and URBs are allocated later, once the mode (and thus the frame size) is
  * known.
  *
  * Return: stream context, or an ERR_PTR() on failure
@@ -974,7 +961,13 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 		return ERR_PTR(ret);
 	}
 
-	stream = devres_alloc(&fl2000_stream_release, sizeof(*stream), GFP_KERNEL);
+	ret = usb_pipe_type_check(usb_dev, usb_sndbulkpipe(usb_dev, 1));
+	if (ret) {
+		dev_err(&usb_dev->dev, "No bulk endpoint to send frames to\n");
+		return ERR_PTR(ret);
+	}
+
+	stream = kzalloc_obj(*stream);
 	if (!stream)
 		return ERR_PTR(-ENOMEM);
 
@@ -995,21 +988,23 @@ struct fl2000_stream *fl2000_stream_create(struct usb_device *usb_dev)
 					   FL2000_CURSOR_MAX * FL2000_CURSOR_MAX);
 	stream->work_queue = alloc_ordered_workqueue("fl2000_stream", 0);
 	if (!stream->line_buf || !stream->cursor_argb || !stream->work_queue) {
-		if (stream->work_queue)
-			destroy_workqueue(stream->work_queue);
-		kfree(stream->cursor_argb);
-		kfree(stream->line_buf);
-		mutex_destroy(&stream->shadow_lock);
-		devres_free(stream);
+		fl2000_stream_destroy(stream);
 		return ERR_PTR(-ENOMEM);
 	}
-
-	devres_add(&usb_dev->dev, stream);
 
 	return stream;
 }
 
-void fl2000_stream_destroy(struct usb_device *usb_dev)
+void fl2000_stream_destroy(struct fl2000_stream *stream)
 {
-	devres_release(&usb_dev->dev, fl2000_stream_release, NULL, NULL);
+	if (stream->work_queue) {
+		fl2000_stream_disable(stream);
+		destroy_workqueue(stream->work_queue);
+	}
+	fl2000_stream_put_buffers(stream);
+	vfree(stream->shadow);
+	kfree(stream->cursor_argb);
+	kfree(stream->line_buf);
+	mutex_destroy(&stream->shadow_lock);
+	kfree(stream);
 }

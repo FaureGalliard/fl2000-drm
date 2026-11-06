@@ -20,14 +20,14 @@
 #define I2C_REG_DATA_SIZE  (sizeof(u8))
 #define I2C_XFER_ADDR_MASK (~0x3ul)
 
-static inline int fl2000_i2c_read_dword(struct usb_device *usb_dev, u16 addr, u8 offset, u32 *data)
+static inline int fl2000_i2c_read_dword(struct regmap *regmap, u16 addr, u8 offset, u32 *data)
 {
-	return fl2000_i2c_dword(usb_dev, true, addr, offset, data);
+	return fl2000_i2c_dword(regmap, true, addr, offset, data);
 }
 
-static inline int fl2000_i2c_write_dword(struct usb_device *usb_dev, u16 addr, u8 offset, u32 *data)
+static inline int fl2000_i2c_write_dword(struct regmap *regmap, u16 addr, u8 offset, u32 *data)
 {
-	return fl2000_i2c_dword(usb_dev, false, addr, offset, data);
+	return fl2000_i2c_dword(regmap, false, addr, offset, data);
 }
 
 static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, int num)
@@ -105,7 +105,7 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
  */
 int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int block, size_t len)
 {
-	struct usb_device *usb_dev = adapter->algo_data;
+	struct regmap *regmap = adapter->algo_data;
 	unsigned int start = block * EDID_LENGTH;
 	int ret = 0;
 
@@ -117,7 +117,7 @@ int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int blo
 	for (unsigned int i = 0; i < len; i += 4) {
 		u32 data;
 
-		ret = fl2000_i2c_dword(usb_dev, true, FL2000_DDC_ADDR, start + i, &data);
+		ret = fl2000_i2c_dword(regmap, true, FL2000_DDC_ADDR, start + i, &data);
 		if (ret)
 			break;
 
@@ -148,30 +148,31 @@ static const struct i2c_adapter_quirks fl2000_i2c_quirks = {
 	.max_comb_2nd_msg_len = I2C_REG_DATA_SIZE,
 };
 
-struct i2c_adapter *fl2000_i2c_init(struct usb_device *usb_dev)
+struct i2c_adapter *fl2000_i2c_init(struct usb_interface *interface, struct regmap *regmap)
 {
 	int ret;
 	struct i2c_adapter *adapter;
+	struct usb_device *usb_dev = interface_to_usbdev(interface);
 	u8 usb_path[32];
 
 	/* Adapter must be allocated before anything else */
-	adapter = devm_kzalloc(&usb_dev->dev, sizeof(*adapter), GFP_KERNEL);
+	adapter = devm_kzalloc(&interface->dev, sizeof(*adapter), GFP_KERNEL);
 	if (!adapter)
 		return ERR_PTR(-ENOMEM);
 
 	adapter->owner = THIS_MODULE;
 	adapter->algo = &fl2000_i2c_algorithm;
 	adapter->quirks = &fl2000_i2c_quirks;
-	adapter->algo_data = usb_dev;
-	adapter->dev.parent = &usb_dev->dev;
+	adapter->algo_data = regmap;
+	adapter->dev.parent = &interface->dev;
 	strscpy(adapter->name, "FL2000 bridge I2C bus", sizeof(adapter->name));
 
-	ret = devm_i2c_add_adapter(&usb_dev->dev, adapter);
+	ret = devm_i2c_add_adapter(&interface->dev, adapter);
 	if (ret)
 		return ERR_PTR(ret);
 
 	usb_make_path(usb_dev, usb_path, sizeof(usb_path));
-	dev_dbg(&usb_dev->dev, "Created FL2000 bridge I2C bus %d at interface %s\n",
+	dev_dbg(&interface->dev, "Created FL2000 bridge I2C bus %d at interface %s\n",
 		i2c_adapter_id(adapter), usb_path);
 
 	return adapter;
