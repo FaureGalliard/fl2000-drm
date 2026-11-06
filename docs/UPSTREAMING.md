@@ -82,7 +82,7 @@ herramienta de IA.
 
 - **Ritmo:** sale un kernel cada 9 semanas (10 si cae en vacaciones). Últimas
   versiones: 7.1 el 14 de junio de 2026, 7.2 el 16 de agosto y 7.3 el 18 de
-  octubre. Ahora está abierta la ventana de merge de 7.4.
+  octubre. 7.4-rc1 salió a primeros de noviembre de 2026; drm-misc-next ya acumula lo que irá en 7.5.
 - **Plazo para drivers nuevos:** tienen que estar aplicados en drm-misc-next
   antes del -rc6 del ciclo anterior (`Documentation/gpu/introduction.rst`,
   "Feature Merge Deadlines").
