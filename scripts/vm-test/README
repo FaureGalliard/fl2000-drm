@@ -1,0 +1,48 @@
+Testing the driver without the adapter
+======================================
+
+A fake FL2000 + IT66121 in userspace (fl2000-emu.c), on raw_gadget and dummy_hcd, in
+a VM whose root file system is the host's, read only. No root is needed. It answers
+the register, I2C and EDID traffic like the chip, takes frames on the bulk endpoint
+and sends interrupts. Nothing here says anything about the real chip: timings, DAC,
+the IT66121 itself, imports from a GPU or a compositor. What it is good for is what
+costs a reboot or a crash on the real thing: unplug, unbind, rmmod, USB resets, errors
+and the frame layout, under KASAN, lockdep, kmemleak and fault injection.
+
+Kernel (a checkout with the driver in drivers/gpu/drm/fl2000/ and its Kconfig hook,
+such as what scripts/make-upstream-series.sh leaves, and with a clean source tree):
+
+    make O=$KB x86_64_defconfig
+    cat scripts/vm-test/kernel.config >> $KB/.config
+    make O=$KB olddefconfig
+    make O=$KB -j8 bzImage modules
+    make O=$KB INSTALL_MOD_PATH=$MODS modules_install
+
+Run, with qemu-system-x86_64 (/dev/kvm must be accessible) and modetest, libdrm and
+python3 on the host:
+
+    scripts/vm-test/run.sh $KB $MODS /tmp/vm.log all
+    grep -E '^(###|FAIL)' /tmp/vm.log
+
+The last line of the suite is "### RESULT: n failures". The panic after it is init
+exiting while the VM powers off. Suites: all and archall (no fault injection, for a
+kernel without it), and what they are made of, see the end of init.sh. Standing alone:
+race; fbcon, with fbcon=map:0; two, with dummy_hcd.num=2; and suspfail, with a module
+where drm_mode_config_helper_suspend() is made to fail.
+
+To run the kernel the machine runs, with the very module that gets installed, if its
+distribution builds dummy_hcd, raw_gadget and 9p: see mk-distro-initrd.sh. The result of
+both is in docs/vm-test-v2.log.
+
+To run another build of the module, say an older version to see a test catch a bug:
+
+    make -C $SRC O=$KB M=$PWD/old KBUILD_MODPOST_WARN=1 CONFIG_DRM_FL2000=m modules
+    scripts/vm-test/run.sh $KB $MODS /tmp/vm.log huge fl_ko=$PWD/old/fl2000.ko
+
+The suites huge, i2c0 and oldrmmod print what happens instead of judging it. v1 of the
+driver crashes in all three.
+
+fl2000-t.c drives the DRM device: atomic commits with a pattern in the framebuffer,
+which verify_frame.py compares with the frame that reached the endpoint, including the
+word swap; a mode that would overflow the buffer size; cursor moves; commits while the
+device goes away; allocation failures through /proc/thread-self/fail-nth.
