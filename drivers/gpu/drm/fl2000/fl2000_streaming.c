@@ -840,57 +840,55 @@ int fl2000_stream_mode_set(struct fl2000_stream *stream, unsigned int width,
 {
 	int ret;
 	unsigned int size;
-	void *shadow;
 
 	/* Round buffer size up to multiple of 8 to meet HW expectations */
 	size = ALIGN(width * height * bytes_pix, 8);
 
 	guard(mutex)(&stream->shadow_lock);
 
+	/* If there are buffers with same size - keep them */
+	if (stream->buf_size != size) {
+		/*
+		 * Without a shadow nothing writes a frame, and an allocation that fails below
+		 * must not leave the old, smaller one to be written with the new geometry.
+		 */
+		fl2000_stream_put_buffers(stream);
+		vfree(stream->shadow);
+		stream->shadow = NULL;
+		stream->buf_size = 0;
+
+		ret = fl2000_stream_get_buffers(stream, size);
+		if (ret)
+			return ret;
+
+		/* One full frame in the device format; only the CPU ever reads it */
+		stream->shadow = vzalloc(size);
+		if (!stream->shadow) {
+			fl2000_stream_put_buffers(stream);
+			return -ENOMEM;
+		}
+
+		/*
+		 * Both generations move on from zero: a buffer carrying zero has never
+		 * been built and always takes the full-copy path.
+		 */
+		stream->shadow_seq++;
+		stream->cursor_seq++;
+
+		stream->buf_size = size;
+	}
+
 	stream->bytes_pix = bytes_pix;
 	stream->width = width;
 	stream->height = height;
-
-	/* If there are buffers with same size - keep them */
-	if (stream->buf_size == size)
-		return 0;
-
-	/* Destroy wrong size buffers if they exist */
-	if (!list_empty(&stream->render_list))
-		fl2000_stream_put_buffers(stream);
-
-	/* Allocate new buffers */
-	ret = fl2000_stream_get_buffers(stream, size);
-	if (ret) {
-		fl2000_stream_put_buffers(stream);
-		stream->buf_size = 0;
-		return ret;
-	}
-
-	/* One full frame in the device format; only the CPU ever reads it */
-	shadow = vzalloc(size);
-	if (!shadow) {
-		fl2000_stream_put_buffers(stream);
-		stream->buf_size = 0;
-		return -ENOMEM;
-	}
-	vfree(stream->shadow);
-	stream->shadow = shadow;
-	/*
-	 * Both generations move on from zero: a buffer carrying zero has never
-	 * been built and always takes the full-copy path.
-	 */
-	stream->shadow_seq++;
-	stream->cursor_seq++;
-
-	stream->buf_size = size;
 
 	return 0;
 }
 
 int fl2000_stream_enable(struct fl2000_stream *stream)
 {
-	if (WARN_ON(list_empty(&stream->render_list)))
+	/* The mode set could not allocate the buffers, and has said so */
+	if (list_empty(&stream->render_list))
 		return -ENOMEM;
 
 	stream->last_report = ktime_get();

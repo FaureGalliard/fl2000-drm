@@ -519,6 +519,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	struct fl2000_timings timings;
 	struct fl2000_pll pll;
 	unsigned int bytes_pix;
+	int ret;
 
 	/*
 	 * Same computation as in atomic_check, which already validated the mode
@@ -563,7 +564,10 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 
 	fl2000_afe_magic(usb_dev);
 
-	fl2000_stream_mode_set(drm_if->stream, mode->hdisplay, mode->vdisplay, bytes_pix);
+	/* Too late to fail the commit: without buffers the stream just does not start */
+	ret = fl2000_stream_mode_set(drm_if->stream, mode->hdisplay, mode->vdisplay, bytes_pix);
+	if (ret)
+		drm_err(drm, "Cannot allocate the stream buffers (%d)\n", ret);
 }
 
 static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_commit *state)
