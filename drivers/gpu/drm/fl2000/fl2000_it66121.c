@@ -476,7 +476,7 @@ static void it66121_set_mode(struct it66121_priv *priv, struct drm_connector *co
 	};
 
 	drm_dbg(bridge->dev, "Setting %s mode " DRM_MODE_FMT "\n", dvi ? "DVI" : "HDMI",
-		    DRM_MODE_ARG(mode));
+		DRM_MODE_ARG(mode));
 
 	ret = drm_hdmi_avi_infoframe_from_display_mode(&frame, connector, mode);
 	if (ret) {

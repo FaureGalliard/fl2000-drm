@@ -84,7 +84,7 @@ static int fl2000_probe(struct usb_interface *interface, const struct usb_device
 		return -ENODEV;
 	}
 
-	/* Frames go to the bulk endpoint of altsetting 1, and the chip has always been used in it */
+	/* Frames go to the bulk endpoint of altsetting 1, and the chip has always been used so */
 	ret = usb_set_interface(usb_dev, FL2000_USBIF_AVCONTROL, 1);
 	if (ret) {
 		dev_err(&interface->dev, "Cannot set streaming interface for bulk transfers\n");

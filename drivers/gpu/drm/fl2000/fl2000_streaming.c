@@ -48,7 +48,7 @@ struct fl2000_stream;
 struct fl2000_stream_buf {
 	struct fl2000_stream *stream;
 	struct list_head list;
-	/* Generation of the content this buffer was built from: if current, it is resent as it is */
+	/* Generation of the content it was built from: if current, it is resent as it is */
 	u32 seq;
 	struct sg_table sgt;
 	struct page **pages;
