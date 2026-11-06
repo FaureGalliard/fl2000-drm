@@ -39,25 +39,21 @@ static int fl2000_i2c_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs, in
 	u8 offset;
 	u32 data;
 
+	/*
+	 * The adapter quirks only let through:
+	 * - 2 messages of 1 byte each, first write then read
+	 * - 1 message of at most 2 bytes
+	 */
+	if (num == 2)
+		read = true;
+	else if (msgs[0].len == 2 && !(msgs[0].flags & I2C_M_RD))
+		read = false;
+	else
+		return -EOPNOTSUPP;
+
 	addr = msgs[0].addr;
 	offset = msgs[0].buf[0] & I2C_XFER_ADDR_MASK;
 	idx = msgs[0].buf[0] - offset;
-
-	/*
-	 * We expect the following:
-	 * - 2 messages, each 1 byte, first write then read
-	 * - 1 message, 2 bytes, write
-	 */
-	if (num == 2) {
-		read = true;
-	} else if (num == 1) {
-		if (msgs[0].len == 2 && !(msgs[0].flags & I2C_M_RD))
-			read = false;
-		else
-			return -EOPNOTSUPP;
-	} else {
-		return -EOPNOTSUPP;
-	}
 
 	/*
 	 * The FL2000 I2C engine only transfers aligned dwords, so the offset is aligned down to a
@@ -134,7 +130,7 @@ int fl2000_ddc_read_block(struct i2c_adapter *adapter, u8 *buf, unsigned int blo
 
 static u32 fl2000_i2c_func(struct i2c_adapter *adap)
 {
-	return I2C_FUNC_I2C | I2C_FUNC_NOSTART;
+	return I2C_FUNC_I2C;
 }
 
 static const struct i2c_algorithm fl2000_i2c_algorithm = {
@@ -143,8 +139,8 @@ static const struct i2c_algorithm fl2000_i2c_algorithm = {
 };
 
 static const struct i2c_adapter_quirks fl2000_i2c_quirks = {
-	/* Combined transfers only: an address write, then data, on the same address */
-	.flags = I2C_AQ_COMB | I2C_AQ_COMB_WRITE_FIRST | I2C_AQ_COMB_SAME_ADDR,
+	/* Combined transfers only: an address write, then a read, on the same address */
+	.flags = I2C_AQ_COMB_WRITE_THEN_READ | I2C_AQ_NO_ZERO_LEN,
 	.max_num_msgs = I2C_CMESSAGES_NUM,
 	.max_write_len = 2 * I2C_REG_DATA_SIZE,
 	.max_read_len = I2C_REG_DATA_SIZE,
