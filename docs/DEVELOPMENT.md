@@ -212,6 +212,33 @@ full-frame conversion at 1080p, against ~9 ms from VRAM on 27 Oct: the
 compositor's buffer now sits in GTT. Plenty for a desktop; re-measure while
 dragging a window before drawing conclusions.
 
+## Suspend and resume (5 November 2026)
+
+The callbacks used to do nothing, and there was no `reset_resume`. The test
+laptop sleeps in S3 (`/sys/power/mem_sleep` is `deep`) and its journal shows
+every USB device being reset on wake; for a reset-resume without the callback
+the USB core unbinds and binds the driver, which a running compositor takes as
+an unplug (see "Unplug and replug" for what Mutter does with that). Earlier
+suspends in the journal were all without the dongle, so the old behaviour with
+it was never observed.
+
+Now (commit bc351ed, to be tested on hardware):
+
+- the USB core calls the driver once per interface, the last first on
+  suspend and in order on resume; `fl2000_drv.c` stops the display at the
+  first suspend and starts it at the first resume, and `reset_resume` is the
+  same callback;
+- suspend: kill the interrupt URB, `drm_mode_config_helper_suspend()` (state
+  saved, outputs off, stream drained), stop the IT66121's 100 ms interrupt
+  polling, which otherwise ends for good at its first failed read;
+- resume: drop both register caches (see the invariant in `CLAUDE.md`),
+  re-run the IT66121 initialisation of attach and the FL2000 reset and USB
+  setup of bind, submit the interrupt URB, mark both EDIDs stale,
+  `drm_mode_config_helper_resume()`, and send a hotplug event.
+
+The core restores the interface altsetting after the reset of a reset-resume,
+so the streaming interface is not set again by the driver.
+
 ## Decoding the driver's DDC messages
 
 `it66121_wait_ddc_ready()` logs the raw `IT66121_DDC_STATUS` (0x16) register:
@@ -276,7 +303,7 @@ as a field failure, which is exactly why they are recorded here.
 | `fl2000_i2c_init()` failure path called `devres_free()` on an already-added devres → `BUG_ON` | Fixed: `devm_kzalloc()` + `devm_i2c_add_adapter()` |
 | `fl2000_drm_bind()` did not check `fl2000_stream_create()`/`fl2000_intr_create()` for `ERR_PTR` and had no unwinding | Fixed |
 | Stream disable could hang in `drain_workqueue()` if no URB was in flight to `up()` the semaphore the work slept on | Semaphore replaced by an atomic credit counter + wait queue; disable wakes the work |
-| `fl2000_get_bytes_pix()` divides a bandwidth in bytes/s by the pixel clock in **kHz** (callers pass `drm_display_mode.clock`), and the "80 % of USB bandwidth" macros compute `* 100 / 80` (125 %). The result is always ≥ 3, so every mode on every USB speed streams RGB888 and the bandwidth check never rejects anything | **Not changed.** With correct units, USB 3.0 (500 MB/s budget) keeps RGB888 up to 166 MHz (1080p60 unchanged) and drops to RGB565 up to 250 MHz; USB 2.0 (48 MB/s) would reject even 640x480@60. Whether the FL2000 tolerates bulk data arriving slower than the refresh rate (the README claims 1080p30 on USB 2.0) has to be checked on hardware before fixing |
+| `fl2000_get_bytes_pix()` divides a bandwidth in bytes/s by the pixel clock in **kHz** (callers pass `drm_display_mode.clock`), and the "80 % of USB bandwidth" macros compute `* 100 / 80` (125 %). The result is always ≥ 3, so every mode on every USB speed streams RGB888 and the bandwidth check never rejects anything | **Fixed 5 Nov 2026** (150722c). The question left open here was answered by the frame-end work: the device takes exactly one frame per refresh and has no frame buffer, so data cannot arrive slower than the refresh rate. The check now uses the active pixel rate against 450 MB/s (SuperSpeed: 500 MB/s after 8b/10b, 90 % usable) or 48 MB/s (high speed: 13 x 512 bytes per microframe, 90 %). USB 3.0 keeps RGB888 up to 1920x1200@60 (415 MB/s, which the vendor offers in RGB888) and uses RGB565 for 2560x1080@60; USB 2.0 only fits 640x480 in RGB565 (the vendor compresses there). RGB565 itself is not yet tested on hardware |
 | FL2000 register bitfield unions and `fl2000_add_bitmask()` | Replaced by `GENMASK()`; proven identical with a mocked regmap that logs all 691 register writes of both versions |
 
 The FL2000 register helpers can be unit-tested this way: compile

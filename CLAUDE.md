@@ -221,6 +221,13 @@ that). Leave the dongle unplugged ~10 s first and verify with
   minor's device, which does not exist yet (`registered` flag in
   `fl2000_drm.c`). The VGA encoder is created after `component_bind_all()`
   because the IT66121 attaches to the first encoder, which must be the HDMI one.
+- **After system sleep, drop the register caches before touching the chips.**
+  Both regmaps (FL2000, IT66121) cache registers and the setup code uses
+  read-modify-write: after a power loss a cached bit that looks set makes the
+  write be skipped. `fl2000_drm_resume()` drops them, re-runs the IT66121
+  init and the FL2000 reset, then `drm_mode_config_helper_resume()`. The USB
+  core calls the PM callbacks once per interface: the display is stopped at
+  the first suspend and started at the first resume (`devs->suspended`).
 - **Register fields are `GENMASK()`/`FIELD_PREP()`**, never C bitfields
   (implementation-defined layout; one bitfield union silently read the wrong
   byte for years, see `docs/DEVELOPMENT.md`).
@@ -264,11 +271,13 @@ that). Leave the dongle unplugged ~10 s first and verify with
    would program the very same registers as the verified mode (148.333 MHz) and
    make the 60.00 Hz mode valid: see `docs/pending/htotal-hdmi.md`, to try with
    an HDMI monitor at hand.
-6. **USB bandwidth check is a no-op**: `fl2000_get_bytes_pix()` gets the
-   pixel clock in kHz but treats it as Hz (and the 80 % margin is inverted),
-   so RGB888 is always chosen. Harmless for 1080p60 on USB 3.0, wrong for
-   USB 2.0 and for modes above ~166 MHz. Details in `docs/DEVELOPMENT.md`;
-   needs hardware to decide the right behavior on USB 2.0.
+6. **USB bandwidth check fixed on 5 Nov (commit 150722c), RGB565 untested.**
+   `fl2000_get_bytes_pix()` now compares the active pixel rate of the mode
+   with 450 MB/s (SuperSpeed) or 48 MB/s (high speed). Every mode used so far
+   keeps RGB888; RGB565 is picked only for modes above ~150 Mpx/s on USB 3.0
+   (2560x1080@60) and for 640x480 on USB 2.0, where nothing larger fits
+   without compression. To test RGB565: the dongle behind a USB 2.0 hub or
+   cable, at 640x480.
 7. **1366x768 on VGA: frame-end fix verified 5 Nov (`field-test-19_03.log`). GNOME showing only the bottom ~10 % at 1360/1366 was the amdgpu vmap of split VRAM; import fix ea3ea23 verified the same evening: GNOME at 1366x768 whole and correct, still zero-copy (AR30 imported, pitch 5632), 60 sent/s, 8.7 ms per full frame, GTT 94 MB.** HDMI 1080p also checked the same evening (59 sent/s, GNOME switched VGA<->HDMI without logging out).
    The frames had no end (see the zero-length URB invariant; commit 627c569),
    and the conversion at that width fell off the streaming-load path (78 ms
@@ -283,18 +292,19 @@ that). Leave the dongle unplugged ~10 s first and verify with
    output".
 8. **Upstream review items still open** (done: simple pipe removed, shadow
    plane, format helpers, vblank timer, fbdev, atomic bridge enable/disable,
-   and on 5 Nov `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR`
-   with the mode programmed in `atomic_enable`, NOT yet tested on hardware:
-   check HDMI with and without EDID, HDMI plug/unplug, VGA, and that
-   `HDMI-A-n` keeps its name):
+   on 5 Nov `drm_bridge_connector` + `DRM_BRIDGE_ATTACH_NO_CONNECTOR` with the
+   mode programmed in `atomic_enable`, verified on hardware the same night
+   (VGA and HDMI fine, `HDMI-A-2`/`VGA-1`, no warnings), and suspend/resume
+   with `reset_resume` (commit bc351ed, NOT yet tested: `systemctl suspend`
+   with the session open, then both outputs; the laptop uses S3 and resets
+   USB devices on wake)):
    - reuse the in-tree `ite-it66121` bridge (asked in the RFC cover letter)
    - no component framework (`drm_bridge_attach()` from probe), a single
      interface plus `usb_driver_claim_interface()`, DRM device parented to the
      USB interface with `drm_dev_set_dma_dev()`. This is the riskiest rework:
      it replaces the lifetime model behind the crash fixes in "Non-obvious
      invariants".
-   - real suspend/resume (`drm_mode_config_helper_suspend()`),
-     `DRM_BRIDGE_OP_HDMI` infoframes (the AVI infoframe is still written by
+   - `DRM_BRIDGE_OP_HDMI` infoframes (the AVI infoframe is still written by
      hand), and maybe `DRM_BRIDGE_OP_HPD` (question 2 of the cover letter).
      Arch 7.2.11 has no `DRM_ITE_IT66121` either.
    Listed in `docs/UPSTREAMING.md` section 6.

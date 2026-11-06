@@ -316,7 +316,7 @@ los plantea.
 7. **Una interfaz y no tres.** Lo idiomático es enlazar una sola interfaz y
    reclamar las otras con `usb_driver_claim_interface()`, con el estado ligado
    a la interfaz o a `drmm_*`. Klogg y el PR #86 ya lo hicieron así.
-8. **Suspend/resume real** (`drm_mode_config_helper_suspend()`).
+8. ~~**Suspend/resume real**~~ **hecho** el 5 nov 2026 (`drm_mode_config_helper_suspend()`/`_resume()`, también `reset_resume`), falta probarlo en hardware. El ancho de banda (RGB888/RGB565) se corrigió el mismo día.
 
 Los puntos 4 a 7 son un solo cambio grande: sustituyen el modelo de ciclo de
 vida que arregló los cuelgues al desconectar (ver "Non-obvious invariants" en

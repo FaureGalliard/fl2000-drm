@@ -19,9 +19,9 @@ salen de leer el código de cada repositorio en esa fecha.
 | Helpers de conversión `drm_fb_xrgb8888_to_*` | **sí** | no (SIMD propio) | **sí** | no (propio, con test) | no |
 | fbdev (`drm_client_setup`) | sí | sí | sí | sí | sí |
 | DMA device (`drm_dev_set_dma_dev`) | no | sí | no | sí | sí |
-| Suspend/resume real | no | sí | sí | sí | — |
+| Suspend/resume real | **sí** (5-nov, sin probar) | sí | sí | sí | — |
 | Vblank por temporizador de DRM | **sí** | no | no | no | no |
-| RGB565 según ancho de banda | roto (unidades) | sí | — | parámetro `max_bpp` | — |
+| RGB565 según ancho de banda | **sí** (5-nov) | sí | — | parámetro `max_bpp` | — |
 | Compila en Linus master (7.4) | **sí** | no (usa API vieja) | no verificado | no (usa API vieja) | no (usa API vieja) |
 | Empaquetado | install.sh | DKMS + paquetes Debian | DKMS | DKMS + PKGBUILD (Arch) | DKMS + instalador |
 | Pruebas | field test en hardware | tests de ciclo de vida, QEMU, benchmarks | — | test de conversión | — |
@@ -59,7 +59,8 @@ salen de leer el código de cada repositorio en esa fecha.
    klogg.
 5. **Una sola interfaz con `usb_driver_claim_interface()`**, el dispositivo DRM
    colgado de la interfaz USB y `drm_dev_set_dma_dev()`.
-6. ~~fbdev~~ **hecho**; faltan **suspend/resume y RGB565 por ancho de banda**.
+6. ~~fbdev~~, ~~suspend/resume~~ y ~~RGB565 por ancho de banda~~ **hechos**
+   (los dos últimos el 5-nov, falta probarlos en hardware).
 7. ~~**VGA** (rhgndf, Samuv5)~~ **hecho** junto al HDMI (conector VGA propio
    con codificador DAC en la misma CRTC); faltan los adaptadores solo-VGA, sin
    IT66121.
