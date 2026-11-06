@@ -12,9 +12,7 @@ the plane selects is converted, into the shadow, and each outgoing
 buffer is brought up to date from it just before it is submitted, by
 replaying the damage rectangles it missed or with a full copy when it is
 too far behind. The send path never waits for a conversion in progress:
-it resends the newest complete frame instead. A cursor sprite is blended
-into each outgoing buffer rather than into the shadow, so moving the
-pointer does not touch the framebuffer.
+it resends the newest complete frame instead.
 
 The framebuffer is often a buffer imported from the primary GPU and
 lives in its VRAM, mapped write-combined. It is read a scanline at a

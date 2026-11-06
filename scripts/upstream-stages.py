@@ -51,12 +51,12 @@ if mk != makefile(final_objs):
 
 # --- fl2000_drv.c, patches 2 and 3: IT66121 bridge, no DRM device ---
 d2 = drv
-d2 = cut(d2, '\tstruct fl2000_drm_if *drm_if;\n')
+d2 = cut(d2, '\tstruct fl2000_device *fdev;\n')
 d2 = cut(d2, '\t/* The display was stopped for system sleep or a reset and has not been restarted yet */\n'
          '\tbool suspended;\n')
-d2 = cut(d2, '\tdevs->drm_if = fl2000_drm_create(', '\tusb_set_intfdata(interface, devs);')
+d2 = cut(d2, '\tdevs->fdev = fl2000_drm_create(', '\tusb_set_intfdata(interface, devs);')
 d2 = cut(d2, 'err_release_interfaces:\n', 'err_destroy_bridge:')
-d2 = cut(d2, '\tfl2000_drm_destroy(devs->drm_if);\n')
+d2 = cut(d2, '\tfl2000_drm_destroy(devs->fdev);\n')
 # no DRM device to suspend yet: the callbacks only keep the driver bound across sleep
 d2 = cut(d2, '/*\n * System sleep. The USB core suspends the interfaces one by one',
          'static struct usb_driver fl2000_driver = {',

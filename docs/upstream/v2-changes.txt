@@ -2,6 +2,24 @@ Changes in v2, for the cover letter ("EDITME" of `b4 prep --edit-cover`). Check
 the hardware line against what was really tested before sending.
 
 Changes in v2:
+- From the review of Thomas Zimmermann:
+  - No cursor plane, and no blending in the driver.
+  - No vblank timer, and so no vblank support.
+  - The EDID is not kept: it is read from the monitor on every probe.
+  - The formats are XRGB8888, converted to RGB888, and RGB565, sent as it is. The
+    10-bit ones went: they are not native (the device takes RGB888 or RGB565),
+    and they were only converted down. What the USB link cannot carry at a mode
+    fails in the atomic check of the plane; the CRTC no longer picks a format.
+  - The limits are what the timing registers hold, 12 bits (4095).
+  - mode_fixup adjusts the clock, mode_valid returns MODE_* codes, the helpers are
+    used as drop-ins, and the plane helper goes first in the plane check.
+  - The interrupt endpoint is only polled once the device is registered, and
+    after system sleep once the state is restored, so no state about that in the
+    driver. The chips themselves are still set up before restoring the state,
+    as restoring it writes to them.
+  - Forcing the monitor sense went to the HDMI encoder, and the CRTC only enables
+    the interrupts about frames.
+  - struct fl2000_device, sorted driver flags, drm_dbg(), fewer comments.
 - Bind through interface 0 and claim the other two with
   usb_driver_claim_interface(), with everything hanging off that binding,
   instead of keeping shared state on the usb_device: unloading the module or
@@ -23,8 +41,6 @@ Changes in v2:
   read of the DDC status pops the DDC FIFO). The DDC bus release stays.
 - Honour the plane's source rectangle: a framebuffer larger than the mode froze
   the output.
-- Set up "pixel blend mode" on both planes, as the core now warns about, and blend
-  the cursor as premultiplied, which is what compositors hand over.
 - No phantom VGA monitor from the forced monitor sense when HDMI is unplugged.
 - Acknowledge the IT66121 from the FL2000 interrupt and unmask its hot plug,
   instead of polling it over USB ten times a second. Enable the monitor interrupts

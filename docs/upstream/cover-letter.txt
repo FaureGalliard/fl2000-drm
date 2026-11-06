@@ -73,24 +73,23 @@ feedback on before doing the larger reworks:
    there a better signal I should look for in the chip?
 
 The rest of the pipeline follows the current helpers: regular atomic
-plane/CRTC/encoder objects with managed initialisation, a cursor plane
-blended by the CPU, GEM SHMEM with shadow-plane access, the DRM vblank
-timer (the FL2000 has no vblank interrupt) and fbdev emulation through
-drm_client_setup(). On the USB side the driver matches interface 0 and
+plane/CRTC/encoder objects with managed initialisation, GEM SHMEM with
+shadow-plane access and fbdev emulation through drm_client_setup(). There
+is no cursor plane and no vblank support. On the USB side the driver matches interface 0 and
 claims the other two, everything hangs off that binding, and resets and
 system sleep do not unbind it.
 
-Other known limitations: RGB565, used when the USB link cannot carry
-RGB888 (2560x1080 on USB 3.0, 640x480 on USB 2.0, as there is no
-compression), has not been tested on hardware; and adapters with a VGA
+Other known limitations: XRGB8888 goes out as RGB888, and modes the USB
+link can only carry in RGB565 (2560x1080 on USB 3.0, 640x480 on USB 2.0,
+as there is no compression) need a framebuffer in that format, which has
+not been tested on hardware; and adapters with a VGA
 connector only, without an IT66121, are not supported: the analog output
 is only added next to the HDMI one.
 
 Tested on x86_64 (amdgpu laptop, GNOME Wayland) with a UGREEN USB 3.0
 adapter with HDMI and VGA connectors: a 1920x1080 monitor on HDMI, and
 an old 1366x768 monitor without a usable EDID on VGA. EDID, mode
-setting, the desktop and the cursor work, at 59 frames per second on
-the link.
+setting and the desktop work, at 59 frames per second on the link.
 The unplug, unbind, module removal and USB reset paths were also run
 under KASAN and lockdep against an emulated FL2000 on raw_gadget and
 dummy_hcd. Every patch builds without warnings with W=1 on top of
@@ -101,7 +100,7 @@ Tool use, as described in Documentation/process/generated-content.rst: I
 used an AI coding assistant (Claude Code with Anthropic Claude models)
 extensively while preparing this series. It helped port the driver to the
 current APIs, clean it up to kernel style, write the shadow-frame
-streaming and the cursor plane, track down and fix the hangs on unplug,
+streaming, track down and fix the hangs on unplug,
 and draft the commit messages and this letter. I reviewed the result and
 tested it on the hardware described above; the Signed-off-by lines are
 mine. The series was generated and checked (per-patch builds, checkpatch)

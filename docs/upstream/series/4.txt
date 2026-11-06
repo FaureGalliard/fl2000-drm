@@ -2,21 +2,19 @@ drm/fl2000: Add KMS display pipeline
 
 Register the DRM device from the probe, and connect the pieces:
 
-- a primary plane, a cursor plane, a CRTC and an encoder, with GEM
-  SHMEM framebuffers accessed through the shadow-plane helpers and
-  XRGB8888 (and the two 10-bit formats compositors render in, reduced
-  to 8 bits) as formats. The framebuffer is only read by the CPU, so it
-  does not need to be physically contiguous. The primary plane passes
-  its merged damage to the stream; the cursor plane hands over its
-  sprite, or only its position when the framebuffer is unchanged.
-  Without a cursor plane, compositors keep the pointer on the primary
-  GPU and it never appears on this output
-- mode validation and PLL search in the CRTC's atomic_check (which
-  adjusts the clock in adjusted_mode), and FL2000 programming in
-  mode_set_nofb, before the bridge is enabled. The PLL cannot make
-  most pixel clocks exactly: digital sinks are only offered modes it
-  hits within 500 ppm, while the VGA output accepts 5000 ppm, since an
-  analog monitor does not notice that but does notice a changed htotal
+- a primary plane, a CRTC and an encoder, with GEM SHMEM framebuffers
+  accessed through the shadow-plane helpers. The device takes RGB888 or
+  RGB565: XRGB8888 is converted to the former and RGB565 goes as it is,
+  and the plane rejects what the USB link cannot carry at the mode. The
+  framebuffer is only read by the CPU, so it does not need to be
+  physically contiguous. The primary plane passes its merged damage to
+  the stream
+- mode validation and PLL search in mode_valid and mode_fixup (which
+  adjusts the clock), and FL2000 programming in mode_set_nofb, before the
+  bridge is enabled. The PLL cannot make most pixel clocks exactly:
+  digital sinks are only offered modes it hits within 500 ppm, while the
+  VGA output accepts 5000 ppm, since an analog monitor does not notice
+  that but does notice a changed htotal
 - the HDMI connector from drm_bridge_connector_init() on the encoder the
   IT66121 bridge is attached to. It is polled, as the bridge has no hot
   plug interrupt of its own
@@ -26,10 +24,9 @@ Register the DRM device from the probe, and connect the pieces:
   other). The chip has one monitor sense input, which follows
   whichever monitor is plugged in, so the VGA connector reports a
   monitor when the chip senses one and the IT66121 does not; the EDID
-  is read with the FL2000 I2C engine, kept while the monitor stays, and
-  without one the standard timings are offered
-- vblank from the DRM vblank timer, as the FL2000 has no vblank
-  interrupt, and fbdev emulation
+  is read with the FL2000 I2C engine, and without one the standard
+  timings are offered
+- fbdev emulation
 - the FL2000 interrupt endpoint, which reports monitor and IT66121
   events and triggers a hotplug event
 - system sleep and USB resets, which stop the display and start it again
@@ -39,6 +36,6 @@ Register the DRM device from the probe, and connect the pieces:
 Tested on x86_64 with a UGREEN USB 3.0 adapter with HDMI and VGA
 connectors (FL2000DX + IT66121FN): a 1920x1080 monitor on HDMI and an
 old 1366x768 monitor without a usable EDID on VGA. EDID, mode setting
-and a GNOME Wayland desktop work, with the cursor, at 59 frames per
+and a GNOME Wayland desktop work, at 59 frames per
 second on the link and no measurable effect on the rest of the system.
 Adapters with a VGA connector only (no IT66121) are not supported.

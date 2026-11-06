@@ -37,9 +37,6 @@ journalctl -k -b | grep -E 'IT66121|fl2000|EDID' | head -30
 - GNOME en el monitor externo a 1920x1080, como siempre. **Si solo ofrece 1024x768 y
   sale `EDID read failed`:** falla la lectura directa sin el intento previo por FIFO
   (commit `6477ff2`).
-- El cursor, sobre todo en sus bordes sobre fondo claro: antes salían algo oscuros,
-  ahora deberían verse bien. Si se ven demasiado claros, Mutter no los manda
-  premultiplicados, lo contrario de lo que asumimos (commit `37d6e6d`).
 - Arrastrar una ventana: `Stream:` en el log a 59 sent/s, sin `fence fallback`.
 
 ## 3. Conectar y desconectar el monitor (el cambio de comportamiento)

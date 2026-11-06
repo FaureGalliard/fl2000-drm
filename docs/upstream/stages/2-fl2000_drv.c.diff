@@ -4,7 +4,7 @@
  	struct regmap *regmap;
  	struct i2c_adapter *adapter;
  	struct drm_bridge *bridge;
--	struct fl2000_drm_if *drm_if;
+-	struct fl2000_device *fdev;
 -	/* The display was stopped for system sleep or a reset and has not been restarted yet */
 -	bool suspended;
  };
@@ -14,9 +14,9 @@
  	if (ret)
  		goto err_destroy_bridge;
  
--	devs->drm_if = fl2000_drm_create(interface, devs->regmap, devs->adapter, devs->bridge);
--	if (IS_ERR(devs->drm_if)) {
--		ret = PTR_ERR(devs->drm_if);
+-	devs->fdev = fl2000_drm_create(interface, devs->regmap, devs->adapter, devs->bridge);
+-	if (IS_ERR(devs->fdev)) {
+-		ret = PTR_ERR(devs->fdev);
 -		goto err_release_interfaces;
 -	}
 -
@@ -35,7 +35,7 @@
  	for (int i = 0; i < FL2000_USBIF_NUM; i++)
  		usb_set_intfdata(usb_ifnum_to_if(usb_dev, i), NULL);
  
--	fl2000_drm_destroy(devs->drm_if);
+-	fl2000_drm_destroy(devs->fdev);
  	it66121_destroy(devs->bridge);
  
  	/* Last, as devs goes with interface 0, which may be one of these */
@@ -64,7 +64,7 @@
 -	/* Even if this fails: the USB core ignores the error during system sleep and goes on */
 -	devs->suspended = true;
 -
--	return fl2000_drm_suspend(devs->drm_if);
+-	return fl2000_drm_suspend(devs->fdev);
 +	return 0;
  }
  
@@ -77,7 +77,7 @@
 -
 -	devs->suspended = false;
 -
--	return fl2000_drm_resume(devs->drm_if);
+-	return fl2000_drm_resume(devs->fdev);
 -}
 -
 -/*
