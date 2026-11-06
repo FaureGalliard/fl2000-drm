@@ -26,11 +26,9 @@
 #define DRM_DRIVER_MINOR      0
 #define DRM_DRIVER_PATCHLEVEL 1
 
-/* Maximum supported resolution, no documented hardware limit */
-#define FL2000_MAX_WIDTH  4000
-#define FL2000_MAX_HEIGHT 4000
-
 /* What the timing registers can hold */
+#define FL2000_MAX_WIDTH  FIELD_MAX(FL2000_VGA_HSYNC1_HACTIVE)
+#define FL2000_MAX_HEIGHT FIELD_MAX(FL2000_VGA_VSYNC1_VACTIVE)
 #define FL2000_MAX_HTOTAL FIELD_MAX(FL2000_VGA_HSYNC1_HTOTAL)
 #define FL2000_MAX_VTOTAL FIELD_MAX(FL2000_VGA_VSYNC1_VTOTAL)
 
@@ -109,7 +107,7 @@ static bool fl2000_link_fits(enum usb_device_speed speed, const struct drm_displ
 	if (!total)
 		return false;
 
-	/* Active pixels per second; at most 500 MHz x 4000 x 4000 (see fl2000_mode_calc()) */
+	/* Active pixels per second; at most 500 MHz x 4095 x 4095 (see fl2000_mode_check()) */
 	rate = div_u64((u64)mode->clock * 1000 * mode->hdisplay * mode->vdisplay, total);
 
 	return rate * bytes_pix <= max_bw;
@@ -287,58 +285,65 @@ static u64 fl2000_pll_calc(u64 clock_mil, struct fl2000_pll *pll, u32 *clock_cal
 }
 
 /*
- * Find the PLL setting for a mode, accepting a pixel clock off by up to @max_ppm parts per
- * million. The timings of the mode are never touched, only the clock the PLL can make for it.
+ * Check a mode against the limits of the chip and find its PLL setting, accepting a pixel clock off
+ * by up to @max_ppm parts per million. @clock is what the PLL really makes, in Hz. The timings of
+ * the mode are never touched.
  */
-static int fl2000_mode_calc(const struct drm_display_mode *mode,
-			    struct drm_display_mode *adjusted_mode, struct fl2000_pll *pll,
-			    u64 max_ppm)
+static enum drm_mode_status fl2000_mode_check(const struct drm_display_mode *mode,
+					      struct fl2000_pll *pll, u32 *clock, u64 max_ppm)
 {
-	u32 clock_calculated;
-	u64 ppm_err;
-
 	/*
 	 * The core checks only the modes it probes against mode_config's limits. A mode set by
 	 * userspace gets here as it is, and the stream sizes its buffers from it: a mode the
 	 * primary plane does not even cover could make that size overflow.
 	 */
-	if (mode->hdisplay > FL2000_MAX_WIDTH || mode->vdisplay > FL2000_MAX_HEIGHT ||
-	    mode->htotal > FL2000_MAX_HTOTAL || mode->vtotal > FL2000_MAX_VTOTAL)
-		return -EINVAL;
+	if (mode->hdisplay > FL2000_MAX_WIDTH || mode->htotal > FL2000_MAX_HTOTAL)
+		return MODE_BAD_HVALUE;
+
+	if (mode->vdisplay > FL2000_MAX_HEIGHT || mode->vtotal > FL2000_MAX_VTOTAL)
+		return MODE_BAD_VVALUE;
 
 	if (mode->clock > FL2000_MAX_PIXCLOCK / 1000)
-		return -EINVAL;
+		return MODE_CLOCK_HIGH;
 
 	/* To keep precision use clock multiplied by 10^6 */
-	ppm_err = fl2000_pll_calc((u64)mode->clock * 1000 * FL2000_PLL_PRECISION, pll,
-				  &clock_calculated);
-	if (ppm_err >= max_ppm)
-		return -EINVAL;
+	if (fl2000_pll_calc((u64)mode->clock * 1000 * FL2000_PLL_PRECISION, pll, clock) >= max_ppm)
+		return MODE_NOCLOCK;
 
-	if (adjusted_mode) {
-		drm_mode_copy(adjusted_mode, mode);
-		adjusted_mode->clock = clock_calculated / 1000;
-	}
-
-	return 0;
+	return MODE_OK;
 }
 
 static enum drm_mode_status fl2000_crtc_mode_valid(struct drm_crtc *crtc,
 						   const struct drm_display_mode *mode)
 {
-	struct fl2000_drm_if *drm_if = to_fl2000_drm_if(crtc->dev);
-	struct drm_display_mode adjusted_mode;
 	struct fl2000_pll pll;
+	enum drm_mode_status status;
+	u32 clock;
 
-	/* Get PLL configuration and check if mode adjustments are needed */
-	if (fl2000_mode_calc(mode, &adjusted_mode, &pll, FL2000_PPM_ERR_MAX_VGA))
-		return MODE_BAD;
+	status = fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX_VGA);
+	if (status != MODE_OK)
+		return status;
 
 	/* Whatever the framebuffer: the plane checks the format it has */
-	if (!fl2000_link_fits(drm_if->usb_dev->speed, &adjusted_mode, 2))
+	if (!fl2000_link_fits(to_fl2000_drm_if(crtc->dev)->usb_dev->speed, mode, 2))
 		return MODE_CLOCK_HIGH;
 
 	return MODE_OK;
+}
+
+/* The clock of the mode becomes the one the PLL makes for it */
+static bool fl2000_crtc_mode_fixup(struct drm_crtc *crtc, const struct drm_display_mode *mode,
+				   struct drm_display_mode *adjusted_mode)
+{
+	struct fl2000_pll pll;
+	u32 clock;
+
+	if (fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX_VGA) != MODE_OK)
+		return false;
+
+	adjusted_mode->clock = clock / 1000;
+
+	return true;
 }
 
 /*
@@ -429,24 +434,6 @@ static const struct drm_plane_funcs fl2000_plane_funcs = {
  * CRTC
  */
 
-static int fl2000_crtc_atomic_check(struct drm_crtc *crtc, struct drm_atomic_commit *state)
-{
-	struct drm_crtc_state *crtc_state = drm_atomic_get_new_crtc_state(state, crtc);
-	struct fl2000_pll pll;
-	int ret;
-
-	ret = drm_crtc_helper_atomic_check(crtc, state);
-	if (ret)
-		return ret;
-
-	if (!crtc_state->enable || !drm_atomic_crtc_needs_modeset(crtc_state))
-		return 0;
-
-	/* PLL configuration, with htotal and clock adjusted to what the PLL can produce */
-	return fl2000_mode_calc(&crtc_state->mode, &crtc_state->adjusted_mode, &pll,
-				FL2000_PPM_ERR_MAX_VGA);
-}
-
 /*
  * HDMI has always run with the monitor sense forced, so it stays so whenever HDMI is driven.
  * Driving VGA alone leaves it to the chip, which then powers the DAC by itself and notices the
@@ -493,13 +480,11 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	struct fl2000_timings timings;
 	struct fl2000_pll pll;
 	unsigned int bytes_pix;
+	u32 clock;
 	int idx, ret;
 
-	/*
-	 * Same computation as in atomic_check, which already validated the mode
-	 * and stored the adjusted htotal and clock in adjusted_mode.
-	 */
-	if (WARN_ON(fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX_VGA)))
+	/* The same as in mode_fixup, which found one */
+	if (WARN_ON(fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX_VGA) != MODE_OK))
 		return;
 	/* The CRTC needs a primary plane to be enabled, and this state is the one being applied */
 	bytes_pix = fl2000_fb_bytes_pix(drm_if->plane.state->fb);
@@ -582,7 +567,8 @@ static void fl2000_crtc_atomic_disable(struct drm_crtc *crtc, struct drm_atomic_
 
 static const struct drm_crtc_helper_funcs fl2000_crtc_helper_funcs = {
 	.mode_valid = fl2000_crtc_mode_valid,
-	.atomic_check = fl2000_crtc_atomic_check,
+	.mode_fixup = fl2000_crtc_mode_fixup,
+	.atomic_check = drm_crtc_helper_atomic_check,
 	.mode_set_nofb = fl2000_crtc_mode_set_nofb,
 	.atomic_enable = fl2000_crtc_atomic_enable,
 	.atomic_disable = fl2000_crtc_atomic_disable,
@@ -604,8 +590,9 @@ static enum drm_mode_status fl2000_hdmi_encoder_mode_valid(struct drm_encoder *e
 							   const struct drm_display_mode *mode)
 {
 	struct fl2000_pll pll;
+	u32 clock;
 
-	return fl2000_mode_calc(mode, NULL, &pll, FL2000_PPM_ERR_MAX) ? MODE_NOCLOCK : MODE_OK;
+	return fl2000_mode_check(mode, &pll, &clock, FL2000_PPM_ERR_MAX);
 }
 
 static const struct drm_encoder_helper_funcs fl2000_hdmi_encoder_helper_funcs = {
@@ -786,9 +773,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 
 	mode_config = &drm->mode_config;
 	mode_config->funcs = &fl2000_mode_config_funcs;
-	mode_config->min_width = 1;
 	mode_config->max_width = FL2000_MAX_WIDTH;
-	mode_config->min_height = 1;
 	mode_config->max_height = FL2000_MAX_HEIGHT;
 
 	ret = drm_universal_plane_init(drm, &drm_if->plane, 0, &fl2000_plane_funcs,
