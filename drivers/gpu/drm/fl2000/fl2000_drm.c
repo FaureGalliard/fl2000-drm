@@ -518,6 +518,29 @@ static void fl2000_crtc_force_connect(struct fl2000_drm_if *drm_if,
 			     crtc_state->encoder_mask & drm_encoder_mask(&drm_if->encoder));
 }
 
+/*
+ * Reset the FL2000 with its I2C engine idle. An operation of the engine is a sequence of register
+ * accesses, by the EDID read or the IT66121 regmap at any moment, and it would not survive a reset
+ * or a write to its control register in the middle.
+ */
+static void fl2000_reset_locked(struct fl2000_drm_if *drm_if)
+{
+	i2c_lock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+	fl2000_reset(drm_if->regmap);
+	i2c_unlock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+}
+
+/* Bring the chip to where it can be used, at bind time or when it may have lost power */
+static void fl2000_chip_setup(struct fl2000_drm_if *drm_if)
+{
+	i2c_lock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+	fl2000_reset(drm_if->regmap);
+	fl2000_usb_magic(drm_if->regmap);
+	i2c_unlock_bus(drm_if->adapter, I2C_LOCK_SEGMENT);
+
+	fl2000_enable_sink_interrupts(drm_if->regmap);
+}
+
 /* Runs before the bridge is enabled: the IT66121 is programmed with the FL2000 clocking it */
 static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 {
@@ -563,7 +586,7 @@ static void fl2000_crtc_mode_set_nofb(struct drm_crtc *crtc)
 	fl2000_crtc_force_connect(drm_if, crtc->state);
 
 	/* Reset FL2000 and confirm PLL settings */
-	fl2000_reset(regmap);
+	fl2000_reset_locked(drm_if);
 
 	/* Set timings settings */
 	fl2000_set_timings(regmap, &timings);
@@ -752,9 +775,7 @@ int fl2000_drm_resume(struct fl2000_drm_if *drm_if)
 	it66121_resume(drm_if->bridge);
 
 	/* The same order as in fl2000_drm_create() */
-	fl2000_reset(regmap);
-	fl2000_usb_magic(regmap);
-	fl2000_enable_sink_interrupts(regmap);
+	fl2000_chip_setup(drm_if);
 
 	/* Without interrupts the connectors are still polled */
 	fl2000_intr_resume(drm_if->intr);
@@ -955,9 +976,7 @@ struct fl2000_drm_if *fl2000_drm_create(struct usb_interface *interface, struct 
 		goto err_destroy_intr;
 	}
 
-	fl2000_reset(regmap);
-	fl2000_usb_magic(regmap);
-	fl2000_enable_sink_interrupts(regmap);
+	fl2000_chip_setup(drm_if);
 
 	/*
 	 * Probe the connector before userspace can see the device. A compositor

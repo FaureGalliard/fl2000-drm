@@ -636,7 +636,9 @@ static void fl2000_stream_work(struct work_struct *work)
 		else
 			ret = fl2000_stream_submit(stream, eof_urb);
 		if (ret) {
-			dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
+			/* The USB core disables the endpoint before the disconnect callback */
+			if (ret != -ENODEV && ret != -ENOENT && ret != -ESHUTDOWN)
+				dev_err(&usb_dev->dev, "Data URB error %d\n", ret);
 			WRITE_ONCE(stream->enabled, false);
 		}
 	}

@@ -191,7 +191,9 @@ int fl2000_usb_magic(struct regmap *regmap)
 {
 	u32 val;
 
-	val = FL2000_VGA_I2C_SC_MONITOR_DETECT | FL2000_VGA_I2C_SC_EDID_DETECT;
+	/* Writing DONE as 0 would start an I2C operation, see fl2000_i2c_dword() */
+	val = FL2000_VGA_I2C_SC_MONITOR_DETECT | FL2000_VGA_I2C_SC_EDID_DETECT |
+	      FL2000_VGA_I2C_SC_DONE;
 	regmap_write_bits(regmap, FL2000_VGA_I2C_SC_REG, val, val);
 
 	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_3, FL2000_VGA_CTRL3_WAKEUP_CLR_EN, 0);
