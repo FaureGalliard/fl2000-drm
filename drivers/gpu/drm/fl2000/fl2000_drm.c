@@ -115,7 +115,7 @@ static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed,
 	if (!total)
 		return 0;
 
-	/* Active pixels per second; at most 500 MHz x 4000 x 4000 (fl2000_mode_calc()), no overflow */
+	/* Active pixels per second; at most 500 MHz x 4000 x 4000 (see fl2000_mode_calc()) */
 	rate = div_u64((u64)mode->clock * 1000 * mode->hdisplay * mode->vdisplay, total);
 	if (!rate)
 		return 0;
@@ -616,7 +616,7 @@ static void fl2000_crtc_atomic_enable(struct drm_crtc *crtc, struct drm_atomic_c
 	int idx;
 
 	if (drm_dev_enter(crtc->dev, &idx)) {
-		/* mode_set_nofb does not run when only the connector changed, and disable cleared it */
+		/* mode_set_nofb does not run when only the connector changed; disable cleared it */
 		fl2000_crtc_force_connect(drm_if, drm_atomic_get_new_crtc_state(state, crtc));
 
 		fl2000_stream_enable(drm_if->stream);
@@ -713,8 +713,9 @@ void fl2000_drm_hotplug(struct drm_device *drm, u32 events)
  * fl2000_drm_destroy() - stop the display and take the DRM device away from userspace
  * @drm_if: the DRM device
  *
- * Called when the USB interfaces are unbound. The DRM device itself is freed when the last reference
- * goes away: that of the interface, a devres, and those of any file userspace still has open.
+ * Called when the USB interfaces are unbound. The DRM device itself is freed when the last
+ * reference goes away: that of the interface, a devres, and those of any file userspace still has
+ * open.
  */
 void fl2000_drm_destroy(struct fl2000_drm_if *drm_if)
 {

@@ -101,7 +101,6 @@ int fl2000_set_pll(struct regmap *regmap, struct fl2000_pll *pll)
  */
 int fl2000_force_connect(struct regmap *regmap, bool force)
 {
-
 	return regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
 				 FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT,
 				 force ? FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT : 0);
@@ -110,14 +109,12 @@ int fl2000_force_connect(struct regmap *regmap, bool force)
 /* Is the chip's monitor sense forced on: then it does not follow any cable */
 bool fl2000_force_connect_active(struct regmap *regmap)
 {
-
 	return regmap_test_bits(regmap, FL2000_VGA_CTRL_REG_ACLK,
 				FL2000_VGA_CTRL_ACLK_FORCE_VGA_CONNECT) > 0;
 }
 
 int fl2000_set_timings(struct regmap *regmap, struct fl2000_timings *timings)
 {
-
 	regmap_write(regmap, FL2000_VGA_HSYNC_REG1,
 		     FIELD_PREP(FL2000_VGA_HSYNC1_HACTIVE, timings->hactive) |
 		     FIELD_PREP(FL2000_VGA_HSYNC1_HTOTAL, timings->htotal));
@@ -170,7 +167,6 @@ int fl2000_set_transfers(struct regmap *regmap)
 
 int fl2000_reset(struct regmap *regmap)
 {
-
 	regmap_write_bits(regmap, FL2000_RST_CTRL_REG, FL2000_RST_CTRL_SW_RESET,
 			  FL2000_RST_CTRL_SW_RESET);
 
@@ -181,7 +177,6 @@ int fl2000_reset(struct regmap *regmap)
 
 int fl2000_afe_magic(struct regmap *regmap)
 {
-
 	regmap_write_bits(regmap, FL2000_USB_LPM_REG, FL2000_USB_LPM_MAGIC, FL2000_USB_LPM_MAGIC);
 
 	return 0;
@@ -209,7 +204,6 @@ int fl2000_usb_magic(struct regmap *regmap)
 /* The interrupts about monitors: they matter from the moment the device is up, mode or no mode */
 int fl2000_enable_sink_interrupts(struct regmap *regmap)
 {
-
 	regmap_write_bits(regmap, FL2000_VGA_CTRL_REG_ACLK, FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN,
 			  FL2000_VGA_CTRL_ACLK_EDID_MON_INT_EN);
 
@@ -313,7 +307,6 @@ int fl2000_i2c_dword(struct regmap *regmap, bool read, u16 addr, u8 offset, u32 
  */
 void fl2000_regmap_drop_cache(struct regmap *regmap)
 {
-
 	regcache_drop_region(regmap, 0, fl2000_regmap_config.max_register);
 }
 
