@@ -1,7 +1,7 @@
 # Development notes — hardware map and debugging history
 
-Companion to `CLAUDE.md`. This file records *why* the driver looks the way it
-does, so the same dead ends are not explored twice.
+This file records *why* the driver looks the way it does, so the same dead
+ends are not explored twice.
 
 ## Hardware map
 
@@ -231,7 +231,8 @@ Now (commit bc351ed, verified on 5 Nov with `pm_test=devices` and a real S3 cycl
 - suspend: kill the interrupt URB, `drm_mode_config_helper_suspend()` (state
   saved, outputs off, stream drained), stop the IT66121's 100 ms interrupt
   polling, which otherwise ends for good at its first failed read;
-- resume: drop both register caches (see the invariant in `CLAUDE.md`),
+- resume: drop both register caches (a cached bit that looks set would make
+  a read-modify-write skip a write the chip needs after a power loss),
   re-run the IT66121 initialisation of attach and the FL2000 reset and USB
   setup of bind, submit the interrupt URB, mark both EDIDs stale,
   `drm_mode_config_helper_resume()`, and send a hotplug event.

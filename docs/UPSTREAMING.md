@@ -24,7 +24,7 @@ Wayland):
 - Suspender y reanudar, también con *reset-resume*: probado con
   `pm_test=devices` y con una suspensión S3 real con la sesión abierta.
 - Sin probar en hardware: RGB565 (solo se usa por encima de 2560x1080 en USB
-  3.0 o en USB 2.0, ver punto 6 de `CLAUDE.md`).
+  3.0 o en USB 2.0, ver la tabla de hallazgos de `docs/DEVELOPMENT.md`).
 
 El código compila sin avisos con `W=1` y `sparse` (`C=2`) en 7.2.11 y en
 drm-misc-next 7.4-rc1, `checkpatch --strict` no da avisos nuevos y las etapas
@@ -299,5 +299,5 @@ los plantea.
 8. ~~**Suspend/resume real**~~ **hecho** el 5 nov 2026 (`drm_mode_config_helper_suspend()`/`_resume()`, también `reset_resume`), falta probarlo en hardware. El ancho de banda (RGB888/RGB565) se corrigió el mismo día.
 
 Los puntos 4 a 7 son un solo cambio grande: sustituyen el modelo de ciclo de
-vida que arregló los cuelgues al desconectar (ver "Non-obvious invariants" en
-`CLAUDE.md`). Hay que hacerlo con el adaptador delante.
+vida que arregló los cuelgues al desconectar (ver la tabla de bugs de
+`docs/DEVELOPMENT.md`). Hay que hacerlo con el adaptador delante.

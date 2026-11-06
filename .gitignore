@@ -22,3 +22,7 @@ spelling.txt
 .vscode/*
 outgoing/
 .compat-build/
+
+# Notes and settings of the coding assistant, kept local
+CLAUDE.md
+.claude/
