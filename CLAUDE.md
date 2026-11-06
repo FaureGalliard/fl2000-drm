@@ -302,7 +302,11 @@ that). Leave the dongle unplugged ~10 s first and verify with
    (`reset SuperSpeed USB device`) and the picture came back at 60 sent/s
    with no errors. On this HP the power LED blinks while asleep and a short
    press of the power button wakes it; keys do not):
-   - reuse the in-tree `ite-it66121` bridge (asked in the RFC cover letter)
+   - reuse the in-tree `ite-it66121` bridge: studied 5 Nov, blocked without
+     other subsystems (it depends on OF, x86 has none, DRM has no bridge
+     lookup without OF, mandatory reset GPIO); see
+     `docs/pending/it66121-in-tree.md`. Left to the maintainers' answer to
+     question 1 of the RFC before writing any of it
    - no component framework (`drm_bridge_attach()` from probe), a single
      interface plus `usb_driver_claim_interface()`, DRM device parented to the
      USB interface with `drm_dev_set_dma_dev()`. This is the riskiest rework:
