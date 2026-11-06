@@ -4,6 +4,7 @@
  * (C) Copyright 2018-2020, Artem Mygaiev
  */
 
+#include <linux/bitfield.h>
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
@@ -28,6 +29,10 @@
 /* Maximum supported resolution, no documented hardware limit */
 #define FL2000_MAX_WIDTH  4000
 #define FL2000_MAX_HEIGHT 4000
+
+/* What the timing registers can hold */
+#define FL2000_MAX_HTOTAL FIELD_MAX(FL2000_VGA_HSYNC1_HTOTAL)
+#define FL2000_MAX_VTOTAL FIELD_MAX(FL2000_VGA_VSYNC1_VTOTAL)
 
 /*
  * 32-bit input. The 10-bit formats are accepted because the compositor hands
@@ -108,7 +113,7 @@ static unsigned int fl2000_get_bytes_pix(enum usb_device_speed speed,
 	if (!total)
 		return 0;
 
-	/* Active pixels per second; at most 500 MHz x 4000 x 4000, so no overflow */
+	/* Active pixels per second; at most 500 MHz x 4000 x 4000 (fl2000_mode_calc()), no overflow */
 	rate = div_u64((u64)mode->clock * 1000 * mode->hdisplay * mode->vdisplay, total);
 	if (!rate)
 		return 0;
@@ -278,7 +283,16 @@ static int fl2000_mode_calc(const struct drm_display_mode *mode,
 	u32 clock_calculated;
 	u64 ppm_err;
 
-	if (mode->clock * 1000 > FL2000_MAX_PIXCLOCK)
+	/*
+	 * The core checks only the modes it probes against mode_config's limits. A mode set by
+	 * userspace gets here as it is, and the stream sizes its buffers from it: a mode the
+	 * primary plane does not even cover could make that size overflow.
+	 */
+	if (mode->hdisplay > FL2000_MAX_WIDTH || mode->vdisplay > FL2000_MAX_HEIGHT ||
+	    mode->htotal > FL2000_MAX_HTOTAL || mode->vtotal > FL2000_MAX_VTOTAL)
+		return -EINVAL;
+
+	if (mode->clock > FL2000_MAX_PIXCLOCK / 1000)
 		return -EINVAL;
 
 	/* To keep precision use clock multiplied by 10^6 */
