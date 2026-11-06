@@ -8,6 +8,7 @@
 #include <linux/math64.h>
 
 #include <drm/clients/drm_client_setup.h>
+#include <drm/drm_blend.h>
 #include <drm/drm_bridge_connector.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_fbdev_shmem.h>
@@ -859,6 +860,18 @@ int fl2000_drm_bind(struct device *master)
 	drm_plane_helper_add(&drm_if->plane, &fl2000_plane_helper_funcs);
 
 	/*
+	 * The primary plane ignores the alpha of ARGB2101010, which is right for both modes: it is
+	 * the bottom layer, on black, where premultiplied colours are already the result.
+	 */
+	ret = drm_plane_create_blend_mode_property(&drm_if->plane,
+						   BIT(DRM_MODE_BLEND_PIXEL_NONE) |
+						   BIT(DRM_MODE_BLEND_PREMULTI));
+	if (ret) {
+		drm_err(drm, "Cannot set the plane blend modes (%d)\n", ret);
+		goto err_free_holder;
+	}
+
+	/*
 	 * Enable the damage-clips property the update path relies on
 	 * (drm_atomic_helper_damage_merged()).
 	 */
@@ -872,6 +885,13 @@ int fl2000_drm_bind(struct device *master)
 		goto err_free_holder;
 	}
 	drm_plane_helper_add(&drm_if->cursor, &fl2000_cursor_helper_funcs);
+
+	/* What fl2000_blend_channel() does */
+	ret = drm_plane_create_blend_mode_property(&drm_if->cursor, BIT(DRM_MODE_BLEND_PREMULTI));
+	if (ret) {
+		drm_err(drm, "Cannot set the cursor blend mode (%d)\n", ret);
+		goto err_free_holder;
+	}
 
 	ret = drmm_crtc_init_with_planes(drm, &drm_if->crtc, &drm_if->plane, &drm_if->cursor,
 					 &fl2000_crtc_funcs, NULL);

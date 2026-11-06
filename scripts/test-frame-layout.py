@@ -121,7 +121,12 @@ static u8 *ref_convert(const u32 *src, u32 w, u32 h, u32 bpp)
 	return out;
 }
 
-static u8 blend(u8 d, u8 s, u8 a) { return (u8)((s * a + d * (255 - a) + 127) / 255); }
+static u8 blend(u8 d, u8 s, u8 a)
+{
+	u32 v = s + (d * (255 - a) + 127) / 255;
+
+	return v > 255 ? 255 : (u8)v;
+}
 
 /* Reference cursor: blend in the linear domain, on the frame the reference converted */
 static u32 ref_blend_pixel(u32 dst_pix, u32 spr, u32 bpp)

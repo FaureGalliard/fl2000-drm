@@ -354,11 +354,12 @@ static int fl2000_stream_submit(struct fl2000_stream *stream, struct urb *urb)
  *
  * Cursor compositing. The sprite is blended into each outgoing frame rather
  * than into the shadow, so moving the pointer costs one 64x64 blend and never
- * re-reads the source framebuffer.
+ * re-reads the source framebuffer. Its colours are premultiplied by its alpha,
+ * as the "pixel blend mode" of the cursor plane says.
  */
 static inline u8 fl2000_blend_channel(u8 dst, u8 src, u8 alpha)
 {
-	return (u8)((src * alpha + dst * (255 - alpha) + 127) / 255);
+	return (u8)min(src + (dst * (255 - alpha) + 127) / 255, 255);
 }
 
 /* 'line' is the offset of the line in the frame, in 16-bit words */
